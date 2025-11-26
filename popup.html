@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Application Form Auto-Fill</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>📋 Form Auto-Fill</h1>
+      <div class="header-actions">
+        <button id="settingsBtn" class="icon-btn" title="Settings">
+          ⚙️
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="content" id="mainContent">
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="detect">Detect Forms</button>
+        <button class="tab-btn" data-tab="profile">My Profile</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+      </div>
+
+      <!-- Detect Forms Tab -->
+      <div class="tab-content active" id="detect-tab">
+        <div class="section">
+          <h2>Form Questions</h2>
+          <button id="detectBtn" class="btn btn-primary">Detect Form Fields</button>
+
+          <div id="formsList" class="forms-list">
+            <p class="empty-state">No forms detected yet. Click "Detect Form Fields" to find forms on this page.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Profile Tab -->
+      <div class="tab-content" id="profile-tab">
+        <div class="section">
+          <h2>Personal Information</h2>
+          <form id="personalForm" class="form">
+            <div class="form-group">
+              <label>Full Name</label>
+              <input type="text" id="fullName" placeholder="Your full name">
+            </div>
+            <div class="form-group">
+              <label>Email</label>
+              <input type="email" id="email" placeholder="your.email@example.com">
+            </div>
+            <div class="form-group">
+              <label>Phone</label>
+              <input type="tel" id="phone" placeholder="+1 (555) 000-0000">
+            </div>
+            <div class="form-group">
+              <label>Location</label>
+              <input type="text" id="location" placeholder="City, Country">
+            </div>
+            <div class="form-group">
+              <label>Professional Summary</label>
+              <textarea id="summary" placeholder="Brief summary about yourself (2-3 sentences)"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Personal Info</button>
+          </form>
+        </div>
+
+        <div class="section">
+          <h2>Education</h2>
+          <button id="addEducationBtn" class="btn btn-secondary">Add Education</button>
+          <div id="educationList" class="item-list"></div>
+        </div>
+
+        <div class="section">
+          <h2>Experience</h2>
+          <button id="addExperienceBtn" class="btn btn-secondary">Add Experience</button>
+          <div id="experienceList" class="item-list"></div>
+        </div>
+
+        <div class="section">
+          <h2>Skills</h2>
+          <button id="addSkillBtn" class="btn btn-secondary">Add Skill</button>
+          <div id="skillsList" class="item-list"></div>
+        </div>
+
+        <div class="section">
+          <h2>Stories & Examples</h2>
+          <button id="addStoryBtn" class="btn btn-secondary">Add Story</button>
+          <div id="storiesList" class="item-list"></div>
+        </div>
+
+        <div class="section">
+          <h2>Values & Goals</h2>
+          <form id="valuesForm" class="form">
+            <div class="form-group">
+              <label>Career Goals</label>
+              <textarea id="careerGoals" placeholder="What are your career goals?"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Key Strengths (comma-separated)</label>
+              <textarea id="strengths" placeholder="e.g., Leadership, Problem-solving, Communication"></textarea>
+            </div>
+            <div class="form-group">
+              <label>Important Values (comma-separated)</label>
+              <textarea id="values" placeholder="e.g., Impact, Growth, Collaboration"></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Values</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Settings Tab -->
+      <div class="tab-content" id="settings-tab">
+        <div class="section">
+          <h2>LLM Configuration</h2>
+          <form id="llmForm" class="form">
+            <div class="form-group">
+              <label>LLM Provider</label>
+              <select id="llmProvider">
+                <option value="openai">OpenAI (GPT-4)</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="password" id="apiKey" placeholder="Paste your API key here">
+              <small>Your API key is stored locally and never sent to external servers.</small>
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input type="text" id="model" placeholder="e.g., gpt-4, claude-3-sonnet">
+            </div>
+            <button type="submit" class="btn btn-primary">Save LLM Settings</button>
+          </form>
+        </div>
+
+        <div class="section">
+          <h2>Auto-Fill Preferences</h2>
+          <form id="autoFillForm" class="form">
+            <div class="form-group checkbox">
+              <input type="checkbox" id="requireApproval">
+              <label>Require approval before filling fields</label>
+            </div>
+            <div class="form-group checkbox">
+              <input type="checkbox" id="avoidRepetition">
+              <label>Avoid repeating the same stories</label>
+            </div>
+            <div class="form-group">
+              <label>Days between story reuse</label>
+              <input type="number" id="minDaysBetweenStories" min="1" value="7">
+            </div>
+            <button type="submit" class="btn btn-primary">Save Auto-Fill Settings</button>
+          </form>
+        </div>
+
+        <div class="section">
+          <h2>Answer Style</h2>
+          <form id="styleForm" class="form">
+            <div class="form-group">
+              <label>Tone</label>
+              <select id="tone">
+                <option value="professional">Professional</option>
+                <option value="conversational">Conversational</option>
+                <option value="formal">Formal</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Length</label>
+              <select id="length">
+                <option value="brief">Brief (1-2 sentences)</option>
+                <option value="medium">Medium (2-3 sentences)</option>
+                <option value="detailed">Detailed (3-4 sentences)</option>
+              </select>
+            </div>
+            <div class="form-group checkbox">
+              <input type="checkbox" id="includeMetrics">
+              <label>Include metrics and quantifiable results</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Style Settings</button>
+          </form>
+        </div>
+
+        <div class="section">
+          <h2>Data Management</h2>
+          <div class="button-group">
+            <button id="exportBtn" class="btn btn-secondary">Export Data</button>
+            <button id="importBtn" class="btn btn-secondary">Import Data</button>
+            <button id="clearBtn" class="btn btn-danger">Clear All Data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <!-- Modal for editing items -->
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h2 id="modalTitle">Edit Item</h2>
+      <form id="modalForm" class="form"></form>
+    </div>
+  </div>
+
+  <script src="src/popup.js"></script>
+</body>
+</html>
