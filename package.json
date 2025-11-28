@@ -4,8 +4,8 @@
   "description": "Chrome extension for automatically filling application forms with AI-generated answers",
   "main": "background.ts",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "node build.js",
+    "dev": "node build.js --watch",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
@@ -20,6 +20,9 @@
   "license": "MIT",
   "devDependencies": {
     "@types/chrome": "^0.0.260",
+    "@types/uuid": "^10.0.0",
+    "esbuild": "^0.20.2",
+    "esbuild-copy-static-files": "latest",
     "typescript": "^5.3.3"
   },
   "dependencies": {

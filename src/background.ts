@@ -5,6 +5,9 @@ import {
   saveGeneratedAnswer,
   updateGeneratedAnswer,
   incrementStoryUsage,
+  updateLLMSettings,
+  updateSettings,
+  updateProfile,
 } from './storage';
 import { LLMProvider, createFormAnswerSystemPrompt, buildProfileSummary, selectRelevantStories } from './llm';
 import { Message, GeneratedAnswer, LLMRequest } from './types';
@@ -67,6 +70,42 @@ async function handleMessage(request: Message, sender: any, sendResponse: any) {
 
       case 'approveAnswer':
         await handleApproveAnswer(request.payload, sendResponse);
+        break;
+
+      case 'saveLLMSettings':
+        console.log('[FormAutoFill] Saving LLM settings:', {
+          provider: request.payload.provider,
+          model: request.payload.model,
+          hasApiKey: !!request.payload.apiKey
+        });
+
+        try {
+          await updateLLMSettings(
+            request.payload.apiKey,
+            request.payload.provider,
+            request.payload.model
+          );
+          console.log('[FormAutoFill] Settings saved, re-initializing LLM provider...');
+
+          // Re-initialize LLM provider with new settings
+          await llmProvider.initialize();
+          console.log('[FormAutoFill] LLM provider initialized');
+
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error('[FormAutoFill] Error in saveLLMSettings:', error);
+          sendResponse({ success: false, error: (error as Error).message });
+        }
+        break;
+
+      case 'saveSettings':
+        await updateSettings(request.payload);
+        sendResponse({ success: true });
+        break;
+
+      case 'saveProfile':
+        await updateProfile(request.payload);
+        sendResponse({ success: true });
         break;
 
       case 'fillField':

@@ -146,6 +146,7 @@ export type MessageAction =
   | 'saveProfile'
   | 'getSettings'
   | 'saveSettings'
+  | 'saveLLMSettings'
   | 'approveAnswer'
   | 'error';
 

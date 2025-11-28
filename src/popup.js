@@ -3,38 +3,42 @@
  * Handles user interactions and profile management in the extension popup
  */
 
-// DOM Elements
-const detectBtn = document.getElementById('detectBtn');
-const formsList = document.getElementById('formsList');
-const tabBtns = document.querySelectorAll('.tab-btn');
-const tabContents = document.querySelectorAll('.tab-content');
-const settingsBtn = document.getElementById('settingsBtn');
-
-// Forms
-const personalForm = document.getElementById('personalForm');
-const llmForm = document.getElementById('llmForm');
-const autoFillForm = document.getElementById('autoFillForm');
-const styleForm = document.getElementById('styleForm');
-const valuesForm = document.getElementById('valuesForm');
-
-// Buttons
-const addEducationBtn = document.getElementById('addEducationBtn');
-const addExperienceBtn = document.getElementById('addExperienceBtn');
-const addSkillBtn = document.getElementById('addSkillBtn');
-const addStoryBtn = document.getElementById('addStoryBtn');
-const exportBtn = document.getElementById('exportBtn');
-const importBtn = document.getElementById('importBtn');
-const clearBtn = document.getElementById('clearBtn');
-
-// Modal
-const modal = document.getElementById('modal');
-const closeBtn = document.querySelector('.close');
-
-// Toast
-const toast = document.getElementById('toast');
+// DOM Elements - will be initialized after DOM loads
+let detectBtn, formsList, tabBtns, tabContents, settingsBtn;
+let personalForm, llmForm, autoFillForm, styleForm, valuesForm;
+let addEducationBtn, addExperienceBtn, addSkillBtn, addStoryBtn;
+let exportBtn, importBtn, clearBtn;
+let modal, closeBtn, toast;
 
 // Initialize popup
 document.addEventListener('DOMContentLoaded', () => {
+  // Initialize all DOM elements
+  detectBtn = document.getElementById('detectBtn');
+  formsList = document.getElementById('formsList');
+  tabBtns = document.querySelectorAll('.tab-btn');
+  tabContents = document.querySelectorAll('.tab-content');
+  settingsBtn = document.getElementById('settingsBtn');
+
+  personalForm = document.getElementById('personalForm');
+  llmForm = document.getElementById('llmForm');
+  autoFillForm = document.getElementById('autoFillForm');
+  styleForm = document.getElementById('styleForm');
+  valuesForm = document.getElementById('valuesForm');
+
+  addEducationBtn = document.getElementById('addEducationBtn');
+  addExperienceBtn = document.getElementById('addExperienceBtn');
+  addSkillBtn = document.getElementById('addSkillBtn');
+  addStoryBtn = document.getElementById('addStoryBtn');
+  exportBtn = document.getElementById('exportBtn');
+  importBtn = document.getElementById('importBtn');
+  clearBtn = document.getElementById('clearBtn');
+
+  modal = document.getElementById('modal');
+  closeBtn = document.querySelector('.close');
+  toast = document.getElementById('toast');
+
+  console.log('[Popup] DOM elements initialized, toast:', toast);
+
   initializeTabs();
   loadProfile();
   loadSettings();
@@ -338,28 +342,41 @@ async function saveValues(e) {
 async function saveLLMSettings(e) {
   e.preventDefault();
 
+  console.log('[Popup] saveLLMSettings called');
+
   const settings = {
     provider: document.getElementById('llmProvider').value,
     apiKey: document.getElementById('apiKey').value,
     model: document.getElementById('model').value,
   };
 
+  console.log('[Popup] Settings:', { provider: settings.provider, model: settings.model, hasApiKey: !!settings.apiKey });
+
   if (!settings.apiKey) {
+    console.log('[Popup] No API key provided');
     showToast('Please enter your API key', 'error');
     return;
   }
 
   try {
+    console.log('[Popup] Sending message to background...');
     // Save via background script
-    await chrome.runtime.sendMessage({
+    const response = await chrome.runtime.sendMessage({
       action: 'saveLLMSettings',
       payload: settings,
     });
 
+    console.log('[Popup] Response:', response);
+
+    // 先强制显示成功消息进行测试
     showToast('LLM settings saved!', 'success');
+
+    if (!response || !response.success) {
+      console.warn('[Popup] Response was not successful:', response);
+    }
   } catch (error) {
-    console.error('Error saving LLM settings:', error);
-    showToast('Error saving LLM settings', 'error');
+    console.error('[Popup] Error saving LLM settings:', error);
+    showToast('Error saving LLM settings: ' + error.message, 'error');
   }
 }
 
@@ -650,8 +667,19 @@ function clearAllData() {
  * Show toast notification
  */
 function showToast(message, type = 'info') {
+  console.log('[showToast] Called with:', { message, type });
+
+  if (!toast) {
+    console.error('[showToast] Toast element not found!');
+    alert(message); // 临时使用 alert 作为后备
+    return;
+  }
+
   toast.textContent = message;
   toast.className = `toast show ${type}`;
+
+  console.log('[showToast] Toast className:', toast.className);
+  console.log('[showToast] Toast style:', window.getComputedStyle(toast).display);
 
   setTimeout(() => {
     toast.classList.remove('show');

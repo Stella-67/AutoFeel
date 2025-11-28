@@ -148,37 +148,47 @@ function extractFormField(element: Element): FormField | null {
 /**
  * Extract the label for a form field
  */
-function extractFieldLabel(element: Element): string {
+function extractFieldLabel(element: HTMLElement): string {
   let label = '';
 
-  // Try to find associated label element
-  const labelElement = document.querySelector(`label[for="${element.id}"]`);
-  if (labelElement) {
-    label = labelElement.textContent?.trim() || '';
+  // 1. Try to find an associated <label> element
+  if (element.id) {
+    const labelElement = document.querySelector(`label[for="${element.id}"]`);
+    if (labelElement) {
+      label = labelElement.textContent?.trim() || '';
+    }
   }
 
-  // If no label, check placeholder
+  // 2. If no label, check for aria-labelledby
+  if (!label && element.getAttribute('aria-labelledby')) {
+    const labelId = element.getAttribute('aria-labelledby');
+    const labelElement = document.getElementById(labelId);
+    if (labelElement) {
+      label = labelElement.textContent?.trim() || '';
+    }
+  }
+
+  // 3. (New) Look for a heading in a shared container (for Google Forms & modern apps)
   if (!label) {
-    label = element.getAttribute('placeholder') || '';
+    // Google Forms often wraps questions in a div with role="listitem"
+    const container = element.closest('div[role="listitem"], div[role="formitem"]');
+    if (container) {
+      // The question is usually in a heading element inside this container
+      const heading = container.querySelector('div[role="heading"]');
+      if (heading) {
+        label = heading.textContent?.trim() || '';
+      }
+    }
   }
 
-  // If still no label, check aria-label
+  // 4. If still no label, check aria-label on the element itself
   if (!label) {
     label = element.getAttribute('aria-label') || '';
   }
 
-  // If still no label, check nearby text or parent content
+  // 5. As a last resort, check for a placeholder
   if (!label) {
-    const parent = element.closest('div, fieldset, form');
-    if (parent) {
-      // Get text from parent, excluding the input itself
-      const clone = parent.cloneNode(true) as Element;
-      const inputClone = clone.querySelector(`[name="${element.getAttribute('name')}"]`);
-      if (inputClone) {
-        inputClone.remove();
-      }
-      label = clone.textContent?.trim().substring(0, 100) || '';
-    }
+    label = element.getAttribute('placeholder') || '';
   }
 
   return label.trim().substring(0, 200); // Limit to 200 chars
@@ -195,7 +205,7 @@ function extractAllPageQuestions(): ExtractedQuestion[] {
     if (field.fieldType === 'textarea' || field.label.length > 10) {
       const question: ExtractedQuestion = {
         fieldId: field.id,
-        questionText: field.label || field.placeholder,
+        questionText: field.label || field.placeholder || '',
         context: extractFormContext(),
         formUrl: window.location.href,
         timestamp: new Date().toISOString(),
@@ -251,7 +261,7 @@ function fillField(selector: string, answer: string): boolean {
       return true;
     } else if (element instanceof HTMLSelectElement) {
       // Find option that matches the answer
-      for (const option of element.options) {
+      for (const option of Array.from(element.options)) {
         if (option.value === answer || option.text === answer) {
           element.value = option.value;
           triggerInputEvent(element);
