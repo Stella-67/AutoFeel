@@ -111,6 +111,9 @@ function extractFormField(element: Element): FormField | null {
 
   const id = generateUUID();
 
+  // Add data-field-id attribute to the element for later reference
+  element.setAttribute('data-field-id', id);
+
   // Determine field type
   let fieldType: FormField['fieldType'] = 'text';
   if (element instanceof HTMLInputElement) {
@@ -122,7 +125,7 @@ function extractFormField(element: Element): FormField | null {
   }
 
   // Extract label text
-  const label = extractFieldLabel(element);
+  const label = extractFieldLabel(element as HTMLElement);
 
   // Get HTML attributes
   const name = element.getAttribute('name') || element.getAttribute('id') || '';
@@ -162,33 +165,55 @@ function extractFieldLabel(element: HTMLElement): string {
   // 2. If no label, check for aria-labelledby
   if (!label && element.getAttribute('aria-labelledby')) {
     const labelId = element.getAttribute('aria-labelledby');
-    const labelElement = document.getElementById(labelId);
+    const labelElement = document.getElementById(labelId!);
     if (labelElement) {
       label = labelElement.textContent?.trim() || '';
     }
   }
 
-  // 3. (New) Look for a heading in a shared container (for Google Forms & modern apps)
+  // 3. Look for a heading in a shared container (for Google Forms & modern apps)
   if (!label) {
-    // Google Forms often wraps questions in a div with role="listitem"
-    const container = element.closest('div[role="listitem"], div[role="formitem"]');
+    // Google Forms often wraps questions in a div with role="listitem" or role="group"
+    const container = element.closest('div[role="listitem"], div[role="group"], div[role="formitem"]');
     if (container) {
       // The question is usually in a heading element inside this container
-      const heading = container.querySelector('div[role="heading"]');
+      const heading = container.querySelector('div[role="heading"], h1, h2, h3, h4, h5, h6, [class*="question"], [class*="title"]');
       if (heading) {
         label = heading.textContent?.trim() || '';
       }
     }
   }
 
-  // 4. If still no label, check aria-label on the element itself
+  // 4. Look for nearby text elements (for custom forms)
+  if (!label) {
+    // Check parent container for labels or text nodes
+    const parent = element.parentElement;
+    if (parent) {
+      // Look for label-like elements in parent
+      const labelLikeElements = parent.querySelectorAll('label, span, div, p');
+      for (const elem of Array.from(labelLikeElements)) {
+        const text = elem.textContent?.trim() || '';
+        // Filter out placeholder-like text (usually shorter and generic)
+        if (text && text.length > 5 && !text.toLowerCase().includes('answer') && !text.toLowerCase().includes('enter')) {
+          label = text;
+          break;
+        }
+      }
+    }
+  }
+
+  // 5. Check for aria-label on the element itself
   if (!label) {
     label = element.getAttribute('aria-label') || '';
   }
 
-  // 5. As a last resort, check for a placeholder
+  // 6. As a last resort, check for placeholder (but filter out generic ones)
   if (!label) {
-    label = element.getAttribute('placeholder') || '';
+    const placeholder = element.getAttribute('placeholder') || '';
+    // Only use placeholder if it's not a generic instruction
+    if (placeholder && !placeholder.toLowerCase().includes('answer') && !placeholder.toLowerCase().includes('enter') && !placeholder.toLowerCase().includes('type')) {
+      label = placeholder;
+    }
   }
 
   return label.trim().substring(0, 200); // Limit to 200 chars
@@ -244,20 +269,35 @@ function extractFormContext(): string {
  */
 function fillField(selector: string, answer: string): boolean {
   try {
-    const element = document.querySelector(selector);
+    console.log('[FormAutoFill] Filling field with selector:', selector);
+
+    let element = document.querySelector(selector);
+
+    // If selector not found, it might be a data-field-id attribute selector
+    if (!element && selector.includes('data-field-id')) {
+      // Extract field ID from selector
+      const match = selector.match(/data-field-id="([^"]+)"/);
+      if (match) {
+        element = document.querySelector(`[data-field-id="${match[1]}"]`);
+      }
+    }
 
     if (!element) {
       console.error('[FormAutoFill] Could not find element with selector:', selector);
       return false;
     }
 
+    console.log('[FormAutoFill] Found element:', element);
+
     if (element instanceof HTMLTextAreaElement) {
       element.value = answer;
       triggerInputEvent(element);
+      console.log('[FormAutoFill] Filled textarea');
       return true;
     } else if (element instanceof HTMLInputElement) {
       element.value = answer;
       triggerInputEvent(element);
+      console.log('[FormAutoFill] Filled input');
       return true;
     } else if (element instanceof HTMLSelectElement) {
       // Find option that matches the answer
@@ -265,6 +305,7 @@ function fillField(selector: string, answer: string): boolean {
         if (option.value === answer || option.text === answer) {
           element.value = option.value;
           triggerInputEvent(element);
+          console.log('[FormAutoFill] Filled select');
           return true;
         }
       }

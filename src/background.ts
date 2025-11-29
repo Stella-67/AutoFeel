@@ -279,9 +279,11 @@ async function handleApproveAnswer(payload: any, sendResponse: any) {
 
 /**
  * Extract context from the current page (for LLM)
+ * Note: Service Worker cannot access document directly
  */
 function extractPageContext(): string {
-  return `Page: ${document.title || 'Unknown'}`;
+  // Context should be passed from content script or popup
+  return '';
 }
 
 /**
