@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Form Helper Options</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    label { display: block; margin-bottom: 8px; font-weight: bold; }
+    input { width: 300px; padding: 8px; margin-bottom: 16px; }
+    button { padding: 8px 16px; cursor: pointer; }
+    .hint { font-size: 0.9em; color: #666; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <h1>AI Form Helper Configuration</h1>
+  
+  <p class="hint">
+    <strong>Usage:</strong> Hold <code style="background:#eee; padding:2px 4px;">Alt</code> and left-click any input field to auto-fill it.
+  </p>
+
+  <label for="apiBaseUrl">API Base URL</label>
+  <input type="text" id="apiBaseUrl" placeholder="http://localhost:3000">
+
+  <br>
+  <button id="saveBtn">Save</button>
+  <span id="status" style="margin-left: 10px; color: green;"></span>
+
+  <script src="options.js"></script>
+</body>
+</html>
