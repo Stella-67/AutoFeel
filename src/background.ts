@@ -144,10 +144,6 @@ async function handleMessage(request: Message, sender: any, sendResponse: any) {
         sendResponse({ success: true });
         break;
 
-      case 'webappToolCall':
-        await handleWebAppToolCall(request.payload, sendResponse);
-        break;
-
       case 'fillField':
         // Forward to content script in the tab
         if (sender.tab?.id) {
@@ -324,105 +320,4 @@ async function handleApproveAnswer(payload: any, sendResponse: any) {
 function extractPageContext(): string {
   // Context should be passed from content script or popup
   return '';
-}
-
-/**
- * WebApp Integration: Handle tool calls from webapp
- * Relayed through webapp-bridge content script
- */
-async function handleWebAppToolCall(payload: any, sendResponse: any) {
-  try {
-    const { toolName, arguments: args } = payload;
-    let result;
-
-    switch (toolName) {
-      case 'detectForms':
-        result = await handleDetectFormsTool(args);
-        break;
-
-      case 'fillField':
-        result = await handleFillFieldTool(args);
-        break;
-
-      case 'ping':
-        result = { success: true, message: 'Extension is connected' };
-        break;
-
-      default:
-        throw new Error(`Unknown tool: ${toolName}`);
-    }
-
-    sendResponse({
-      success: true,
-      result
-    });
-
-  } catch (error) {
-    console.error('[FormAutoFill] Error executing webapp tool:', error);
-    sendResponse({
-      success: false,
-      error: (error as Error).message
-    });
-  }
-}
-
-/**
- * Tool: detectForms
- * Detects form fields on the active tab
- */
-async function handleDetectFormsTool(args: any) {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
-
-  if (!tab?.id) {
-    throw new Error('No active tab found');
-  }
-
-  // Send message to content script
-  const response = await chrome.tabs.sendMessage(tab.id, {
-    action: 'getPageQuestions',
-    includeHidden: args.includeHidden || false
-  });
-
-  return {
-    fields: response?.questions || [],
-    url: tab.url || '',
-    pageTitle: tab.title || ''
-  };
-}
-
-/**
- * Tool: fillField
- * Fills a form field on the active tab
- */
-async function handleFillFieldTool(args: any) {
-  const { fieldId, value, verify } = args;
-
-  if (!fieldId || !value) {
-    throw new Error('fieldId and value are required');
-  }
-
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
-
-  if (!tab?.id) {
-    throw new Error('No active tab found');
-  }
-
-  // Send message to content script
-  const response = await chrome.tabs.sendMessage(tab.id, {
-    action: 'fillField',
-    fieldSelector: `[data-field-id="${fieldId}"]`,
-    answer: value
-  });
-
-  if (!response?.success) {
-    throw new Error(response?.error || 'Failed to fill field');
-  }
-
-  return {
-    success: true,
-    fieldLabel: fieldId,
-    filledValue: value
-  };
 }

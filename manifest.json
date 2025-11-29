@@ -22,11 +22,6 @@
       "matches": ["<all_urls>"],
       "js": ["dist/content.js"],
       "run_at": "document_end"
-    },
-    {
-      "matches": ["http://localhost:*/*", "https://localhost:*/*"],
-      "js": ["dist/webapp-bridge.js"],
-      "run_at": "document_start"
     }
   ],
   "action": {

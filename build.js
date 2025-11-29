@@ -4,7 +4,7 @@ const copyStaticFiles = require('esbuild-copy-static-files');
 
 esbuild
   .build({
-    entryPoints: ['src/background.ts', 'src/content.ts', 'src/popup.js', 'src/webapp-bridge.ts'],
+    entryPoints: ['src/background.ts', 'src/content.ts', 'src/popup.js'],
     bundle: true,
     outdir: 'dist',
     minify: true,
