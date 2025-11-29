@@ -158,23 +158,126 @@ Key principles:
 QUESTION: "${question}"`;
 
     if (context) {
-      message += `\nCONTEXT: ${context}`;
+      message += `\n\nCONTEXT: ${context}`;
     }
 
     if (customization.targetCompany) {
-      message += `\nTARGET: ${customization.targetCompany}`;
+      message += `\n\nTARGET COMPANY/ORGANIZATION: ${customization.targetCompany}`;
     }
 
-    message += `\n\nTONE: ${toneGuide[customization.tone]}`;
+    // Add user profile information
+    message += `\n\n=== CANDIDATE PROFILE ===\n`;
+    message += this.formatProfileForLLM(userProfile);
+
+    message += `\n\n=== RESPONSE REQUIREMENTS ===`;
+    message += `\nTONE: ${toneGuide[customization.tone]}`;
     message += `\nLENGTH: ${lengthGuide[customization.length]}`;
 
     if (customization.includeMetrics) {
-      message += '\nINCLUDE METRICS: If relevant, include quantifiable results or metrics.';
+      message += '\nINCLUDE METRICS: If relevant, include quantifiable results or metrics from the profile.';
     }
 
-    message += `\n\nBased on the candidate's profile, generate a compelling, authentic answer.`;
+    message += `\n\nGenerate a compelling, authentic answer based ONLY on the information in the candidate's profile above. Do not fabricate or assume information not present in the profile.`;
 
     return message;
+  }
+
+  /**
+   * Format user profile for LLM consumption
+   */
+  private formatProfileForLLM(profile: UserProfile): string {
+    const sections: string[] = [];
+
+    // Personal Information
+    if (profile.personal.fullName || profile.personal.summary) {
+      sections.push('PERSONAL:');
+      if (profile.personal.fullName) sections.push(`Name: ${profile.personal.fullName}`);
+      if (profile.personal.email) sections.push(`Email: ${profile.personal.email}`);
+      if (profile.personal.location) sections.push(`Location: ${profile.personal.location}`);
+      if (profile.personal.summary) sections.push(`Summary: ${profile.personal.summary}`);
+    }
+
+    // Education
+    if (profile.education && profile.education.length > 0) {
+      sections.push('\nEDUCATION:');
+      profile.education.forEach((edu, index) => {
+        sections.push(`${index + 1}. ${edu.degree} in ${edu.field}`);
+        sections.push(`   Institution: ${edu.institution} (${edu.graduationYear})`);
+        if (edu.gpa) sections.push(`   GPA: ${edu.gpa}`);
+        if (edu.relevantCoursework && edu.relevantCoursework.length > 0) {
+          sections.push(`   Coursework: ${edu.relevantCoursework.join(', ')}`);
+        }
+        if (edu.achievements && edu.achievements.length > 0) {
+          sections.push(`   Achievements: ${edu.achievements.join('; ')}`);
+        }
+      });
+    }
+
+    // Experience
+    if (profile.experience && profile.experience.length > 0) {
+      sections.push('\nWORK EXPERIENCE:');
+      profile.experience.forEach((exp, index) => {
+        sections.push(`${index + 1}. ${exp.title} at ${exp.company}`);
+        sections.push(`   Duration: ${exp.duration}`);
+        if (exp.description) sections.push(`   Description: ${exp.description}`);
+        if (exp.keyAchievements && exp.keyAchievements.length > 0) {
+          sections.push(`   Key Achievements:`);
+          exp.keyAchievements.forEach((achievement) => {
+            sections.push(`   - ${achievement}`);
+          });
+        }
+        if (exp.skills && exp.skills.length > 0) {
+          sections.push(`   Skills Used: ${exp.skills.join(', ')}`);
+        }
+        if (exp.impact) sections.push(`   Impact: ${exp.impact}`);
+      });
+    }
+
+    // Skills
+    if (profile.skills && profile.skills.length > 0) {
+      sections.push('\nSKILLS:');
+      const skillsByCategory: Record<string, string[]> = {};
+      profile.skills.forEach((skill) => {
+        if (!skillsByCategory[skill.category]) {
+          skillsByCategory[skill.category] = [];
+        }
+        skillsByCategory[skill.category].push(`${skill.name} (${skill.proficiency})`);
+      });
+      Object.entries(skillsByCategory).forEach(([category, skills]) => {
+        sections.push(`${category}: ${skills.join(', ')}`);
+      });
+    }
+
+    // Stories
+    if (profile.stories && profile.stories.length > 0) {
+      sections.push('\nSTORIES/EXAMPLES:');
+      profile.stories.forEach((story, index) => {
+        sections.push(`${index + 1}. ${story.title}`);
+        sections.push(`   ${story.story}`);
+        if (story.tags && story.tags.length > 0) {
+          sections.push(`   Tags: ${story.tags.join(', ')}`);
+        }
+      });
+    }
+
+    // Values and Goals
+    if (profile.values) {
+      sections.push('\nVALUES & GOALS:');
+      if (profile.values.careerGoals) {
+        sections.push(`Career Goals: ${profile.values.careerGoals}`);
+      }
+      if (profile.values.strengths && profile.values.strengths.length > 0) {
+        sections.push(`Key Strengths: ${profile.values.strengths.join(', ')}`);
+      }
+      if (profile.values.motivation && profile.values.motivation.length > 0) {
+        sections.push(`Motivations: ${profile.values.motivation.join(', ')}`);
+      }
+      if (profile.values.valuesImportant && profile.values.valuesImportant.length > 0) {
+        sections.push(`Important Values: ${profile.values.valuesImportant.join(', ')}`);
+      }
+    }
+
+    return sections.join('\n');
   }
 }
 
