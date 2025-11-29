@@ -158,12 +158,17 @@ function updateSelectionRect(currentX, currentY) {
  * @returns {Element[]} 相交的可填充元素的数组。
  */
 function getElementsInSelection(rect) {
-  const candidates = document.querySelectorAll('input, textarea, select');
+  // 扩展查询，包含任意 [contenteditable] 的元素
+  const candidates = document.querySelectorAll('input, textarea, select, [contenteditable]');
   return Array.from(candidates).filter(el => {
     // 只考虑可见元素
     if (el.offsetParent === null) return false;
     
     const r = el.getBoundingClientRect();
+    
+    // 过滤掉尺寸极小的元素（有时富文本编辑器内部会有隐藏的辅助 input/div）
+    if (r.width < 10 || r.height < 10) return false;
+
     // 检查元素边界矩形与选择矩形之间的相交
     const horizontally = r.left < rect.right && r.right > rect.left;
     const vertically   = r.top  < rect.bottom && r.bottom > rect.top;

@@ -142,10 +142,21 @@ function handleResponse(inputEl, blockEl, response) {
     blockEl.classList.add('fc-ai-success');
     
     if (response.value !== null && response.value !== undefined) {
-      inputEl.value = response.value;
-      // 派发 'input' 和 'change' 事件，以通知框架（如 React, Vue）值已更改
-      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-      inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+      if (inputEl.isContentEditable) {
+        // 对于富文本编辑器 (contenteditable)，使用 execCommand 模拟用户输入
+        // 这能确保大多数编辑器（如 ProseMirror, Ed, etc.）正确捕获变更
+        inputEl.focus();
+        // 选中所有内容以便替换（类似 .value = ... 的行为），或者根据需求决定是否全选
+        // 这里简单实现为：选中所有内容然后替换
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, response.value);
+      } else {
+        // 标准 input/textarea
+        inputEl.value = response.value;
+        // 派发 'input' 和 'change' 事件，以通知框架（如 React, Vue）值已更改
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     }
 
     // 动画结束后移除成功动画类

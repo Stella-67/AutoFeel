@@ -10,7 +10,7 @@ let autoIdCounter = 0;
  * @returns {boolean} 如果元素可填充，则返回true，否则返回false。
  */
 export function isFillableElement(el) {
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
 }
 
 /**
@@ -20,6 +20,24 @@ export function isFillableElement(el) {
  * @returns {Element} 块元素。
  */
 export function getBlockElement(el) {
+  if (el.isContentEditable) {
+    // 对于富文本编辑器，el 往往是内部的 <p> 或 <div>。
+    // 我们希望找到看起来像“编辑器容器”的元素。
+    // 简单的启发式：向上找，直到找到一个有边框、背景色或者特定的 class 的元素，
+    // 或者直接找父元素直到它足够“大”。
+    
+    // 这里使用一个简单的逻辑：如果父元素看起来像是一个包装器（例如 ed discussion 的 .prosemirror-parent），就用它。
+    // 否则回退到直接父元素。
+    
+    // 尝试向上查找常见的编辑器容器类名特征 (特定于 Ed Discussion 或通用富文本)
+    // Ed Discussion 通常用 ProseMirror
+    const editorContainer = el.closest('.ProseMirror, .ed-editor-content, [contenteditable="true"]');
+    if (editorContainer && editorContainer !== el && editorContainer.contains(el)) {
+       return editorContainer;
+    }
+    // 如果当前元素本身就是 contenteditable 容器（常见情况），就用它自己或它的父元素
+    return el;
+  }
   return el.parentElement || el;
 }
 
@@ -30,12 +48,30 @@ export function getBlockElement(el) {
  * @returns {object} 字段描述符。
  */
 export function buildFieldDescriptor(el) {
+  const isContentEditable = el.isContentEditable;
+  
+  let type = 'other';
+  if (isContentEditable) {
+    type = 'contenteditable';
+  } else if (el.tagName === 'TEXTAREA') {
+    type = 'textarea';
+  } else {
+    type = el.type || 'other';
+  }
+
+  let currentValue = '';
+  if (isContentEditable) {
+    currentValue = el.innerText;
+  } else {
+    currentValue = el.value || '';
+  }
+
   return {
     dom_id: getDomId(el),
     label: getLabel(el),
-    placeholder: el.placeholder || null,
-    type: el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'other'),
-    current_value: el.value || '',
+    placeholder: el.placeholder || el.getAttribute('placeholder') || null,
+    type: type,
+    current_value: currentValue,
     page_url: window.location.href,
     name: el.name || null
   };

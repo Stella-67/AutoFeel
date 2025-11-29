@@ -8,23 +8,30 @@
 .fc-ai-filling {
   position: relative;
   transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
-  transition: all 0.2s ease;
-  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+  z-index: 10000 !important; /* Ensure it floats above other UI elements */
+  background-color: white; /* Prevent transparency issues if container is transparent */
+  border-radius: 4px; /* Smooth edges */
 }
 
 .fc-ai-success {
   animation: fcAiSuccessFlash 0.6s ease;
+  background-color: rgba(46, 204, 113, 0.15) !important;
+  border-radius: 4px;
 }
 
 .fc-ai-fail {
   animation: fcAiShake 0.4s ease;
+  box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.8) !important;
+  background-color: rgba(231, 76, 60, 0.15) !important;
+  border-radius: 4px;
 }
 
 @keyframes fcAiSuccessFlash {
-  0%   { box-shadow: 0 0 0 rgba(0, 200, 0, 0.0); }
-  50%  { box-shadow: 0 0 0 3px rgba(0, 200, 0, 0.6); }
-  100% { box-shadow: 0 0 0 rgba(0, 200, 0, 0.0); }
+  0%   { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.0); }
+  50%  { box-shadow: 0 0 0 4px rgba(46, 204, 113, 0.8); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.0); }
 }
 
 @keyframes fcAiShake {
@@ -48,15 +55,18 @@
 }
 
 .fc-ai-selected {
-  outline: 2px dashed #4a90e2;
-  outline-offset: 2px;
+  /* \u4F7F\u7528 box-shadow \u6A21\u62DF\u8FB9\u6846\uFF0C\u907F\u514D\u5E03\u5C40\u6296\u52A8\uFF0C\u4E14\u6BD4 outline \u66F4\u7A33\u5065 */
+  box-shadow: 0 0 0 3px #4a90e2, 0 0 12px rgba(74, 144, 226, 0.6) !important;
+  background-color: rgba(74, 144, 226, 0.15) !important;
+  border-radius: 4px;
+  z-index: 10001 !important;
   animation: fcAiSelectedPulse 1s infinite;
 }
 
 @keyframes fcAiSelectedPulse {
-  0% { outline-color: rgba(74, 144, 226, 0.4); }
-  50% { outline-color: rgba(74, 144, 226, 1); }
-  100% { outline-color: rgba(74, 144, 226, 0.4); }
+  0% { box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.4), 0 0 12px rgba(74, 144, 226, 0.2); }
+  50% { box-shadow: 0 0 0 3px rgba(74, 144, 226, 1), 0 0 20px rgba(74, 144, 226, 0.6); }
+  100% { box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.4), 0 0 12px rgba(74, 144, 226, 0.2); }
 }
 `;
     document.head.appendChild(style);
@@ -65,18 +75,40 @@
   // src/domDescriptors.js
   var autoIdCounter = 0;
   function isFillableElement(el) {
-    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable;
   }
   function getBlockElement(el) {
+    if (el.isContentEditable) {
+      const editorContainer = el.closest('.ProseMirror, .ed-editor-content, [contenteditable="true"]');
+      if (editorContainer && editorContainer !== el && editorContainer.contains(el)) {
+        return editorContainer;
+      }
+      return el;
+    }
     return el.parentElement || el;
   }
   function buildFieldDescriptor(el) {
+    const isContentEditable = el.isContentEditable;
+    let type = "other";
+    if (isContentEditable) {
+      type = "contenteditable";
+    } else if (el.tagName === "TEXTAREA") {
+      type = "textarea";
+    } else {
+      type = el.type || "other";
+    }
+    let currentValue = "";
+    if (isContentEditable) {
+      currentValue = el.innerText;
+    } else {
+      currentValue = el.value || "";
+    }
     return {
       dom_id: getDomId(el),
       label: getLabel(el),
-      placeholder: el.placeholder || null,
-      type: el.tagName === "TEXTAREA" ? "textarea" : el.type || "other",
-      current_value: el.value || "",
+      placeholder: el.placeholder || el.getAttribute("placeholder") || null,
+      type,
+      current_value: currentValue,
       page_url: window.location.href,
       name: el.name || null
     };
@@ -204,10 +236,11 @@
     selectionRectEl.style.height = height + "px";
   }
   function getElementsInSelection(rect) {
-    const candidates = document.querySelectorAll("input, textarea, select");
+    const candidates = document.querySelectorAll("input, textarea, select, [contenteditable]");
     return Array.from(candidates).filter((el) => {
       if (el.offsetParent === null) return false;
       const r = el.getBoundingClientRect();
+      if (r.width < 10 || r.height < 10) return false;
       const horizontally = r.left < rect.right && r.right > rect.left;
       const vertically = r.top < rect.bottom && r.bottom > rect.top;
       return horizontally && vertically;
@@ -310,9 +343,15 @@
     if (response && response.status === "success") {
       blockEl.classList.add("fc-ai-success");
       if (response.value !== null && response.value !== void 0) {
-        inputEl.value = response.value;
-        inputEl.dispatchEvent(new Event("input", { bubbles: true }));
-        inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+        if (inputEl.isContentEditable) {
+          inputEl.focus();
+          document.execCommand("selectAll", false, null);
+          document.execCommand("insertText", false, response.value);
+        } else {
+          inputEl.value = response.value;
+          inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+          inputEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
       }
       setTimeout(() => {
         blockEl.classList.remove("fc-ai-success");
