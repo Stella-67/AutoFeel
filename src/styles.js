@@ -66,6 +66,80 @@ export function injectAutoFeelStyles() {
   50% { box-shadow: 0 0 0 3px rgba(74, 144, 226, 1), 0 0 20px rgba(74, 144, 226, 0.6); }
   100% { box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.4), 0 0 12px rgba(74, 144, 226, 0.2); }
 }
+
+.fc-prompt-dialog {
+  background: white;
+  border: 2px solid #4a90e2;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  padding: 12px;
+  min-width: 320px;
+  max-width: 480px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.fc-prompt-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a90e2;
+  margin-bottom: 8px;
+}
+
+.fc-prompt-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.fc-prompt-input:focus {
+  outline: none;
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
+.fc-prompt-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.fc-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fc-btn-cancel {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.fc-btn-cancel:hover {
+  background: #e0e0e0;
+}
+
+.fc-btn-generate {
+  background: #4a90e2;
+  color: white;
+}
+
+.fc-btn-generate:hover {
+  background: #357abd;
+}
+
+.fc-btn:active {
+  transform: scale(0.98);
+}
 `;
   document.head.appendChild(style);
 }

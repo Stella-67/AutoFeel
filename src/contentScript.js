@@ -18,12 +18,88 @@ document.addEventListener('click', (e) => {
   if ((isModifierHeld || e.metaKey || e.ctrlKey) && isFillableElement(e.target)) {
     e.preventDefault();
     e.stopPropagation();
-    handleAIClick(e.target);
+    handleAIClick(e.target, e.altKey);
   }
 }, true);
 
-async function handleAIClick(targetElement) {
-  await handleAIInteraction(targetElement, null);
+async function handleAIClick(targetElement, showPromptInput) {
+  if (showPromptInput) {
+    const customPrompt = await showPromptDialog(targetElement);
+    if (customPrompt !== null) {
+      await handleAIInteraction(targetElement, null, customPrompt);
+    }
+  } else {
+    await handleAIInteraction(targetElement, null, '');
+  }
+}
+
+function showPromptDialog(targetElement) {
+  return new Promise((resolve) => {
+    const existingDialog = document.querySelector('.fc-prompt-dialog');
+    if (existingDialog) existingDialog.remove();
+
+    const block = getBlockElement(targetElement);
+    const rect = block.getBoundingClientRect();
+
+    const dialog = document.createElement('div');
+    dialog.className = 'fc-prompt-dialog';
+    dialog.innerHTML = `
+      <div class="fc-prompt-header">
+        <span>Custom Instructions (optional)</span>
+      </div>
+      <textarea class="fc-prompt-input" placeholder="e.g., 'make it formal', 'keep it brief', 'be creative'..." rows="2"></textarea>
+      <div class="fc-prompt-actions">
+        <button class="fc-btn fc-btn-cancel">Cancel</button>
+        <button class="fc-btn fc-btn-generate">Generate</button>
+      </div>
+    `;
+
+    dialog.style.position = 'absolute';
+    dialog.style.left = `${rect.left + window.pageXOffset}px`;
+    dialog.style.top = `${rect.bottom + window.pageYOffset + 8}px`;
+    dialog.style.zIndex = '999999';
+
+    document.body.appendChild(dialog);
+
+    const input = dialog.querySelector('.fc-prompt-input');
+    const generateBtn = dialog.querySelector('.fc-btn-generate');
+    const cancelBtn = dialog.querySelector('.fc-btn-cancel');
+
+    input.focus();
+
+    const cleanup = () => {
+      dialog.remove();
+    };
+
+    generateBtn.addEventListener('click', () => {
+      const value = input.value.trim();
+      cleanup();
+      resolve(value || '');
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      cleanup();
+      resolve(null);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.ctrlKey) {
+        const value = input.value.trim();
+        cleanup();
+        resolve(value || '');
+      } else if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!dialog.contains(e.target)) {
+        cleanup();
+        resolve(null);
+      }
+    }, { once: true, capture: true });
+  });
 }
 
 initSelectionMode({
@@ -47,7 +123,7 @@ initSelectionMode({
   }
 });
 
-async function handleAIInteraction(targetElement, blockSnapshot) {
+async function handleAIInteraction(targetElement, blockSnapshot, customPrompt = '') {
   const block = getBlockElement(targetElement);
   block.classList.add('fc-ai-filling');
 
@@ -56,7 +132,8 @@ async function handleAIInteraction(targetElement, blockSnapshot) {
   try {
     const payload = {
       fieldDescriptor,
-      sessionId: null
+      sessionId: null,
+      customPrompt
     };
 
     if (blockSnapshot) {

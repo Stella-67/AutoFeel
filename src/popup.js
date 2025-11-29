@@ -4,7 +4,7 @@
  */
 
 // DOM Elements - will be initialized after DOM loads
-let detectBtn, formsList, tabBtns, tabContents, settingsBtn;
+let tabBtns, tabContents, settingsBtn;
 let personalForm, llmForm, autoFillForm, styleForm, valuesForm;
 let addEducationBtn, addExperienceBtn, addSkillBtn, addStoryBtn;
 let exportBtn, importBtn, clearBtn;
@@ -13,8 +13,6 @@ let modal, closeBtn, toast;
 // Initialize popup
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize all DOM elements
-  detectBtn = document.getElementById('detectBtn');
-  formsList = document.getElementById('formsList');
   tabBtns = document.querySelectorAll('.tab-btn');
   tabContents = document.querySelectorAll('.tab-content');
   settingsBtn = document.getElementById('settingsBtn');
@@ -71,9 +69,6 @@ function switchTab(tabName) {
  * Setup all event listeners
  */
 function setupEventListeners() {
-  // Detect forms
-  detectBtn.addEventListener('click', detectForms);
-
   // Profile forms
   personalForm.addEventListener('submit', savePersonalInfo);
   valuesForm.addEventListener('submit', saveValues);
@@ -104,186 +99,6 @@ function setupEventListeners() {
 
   // Settings button
   settingsBtn.addEventListener('click', () => switchTab('settings'));
-}
-
-/**
- * Detect forms on the current page
- */
-async function detectForms() {
-  try {
-    detectBtn.disabled = true;
-    detectBtn.textContent = 'Detecting...';
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    // Send message to content script to detect forms
-    const response = await chrome.tabs.sendMessage(tab.id, {
-      action: 'getPageQuestions',
-    });
-
-    if (response.questions && response.questions.length > 0) {
-      displayDetectedForms(response.questions);
-      showToast(`Found ${response.questions.length} form fields!`, 'success');
-    } else {
-      formsList.innerHTML = '<p class="empty-state">No form fields found on this page.</p>';
-      showToast('No form fields detected', 'error');
-    }
-  } catch (error) {
-    console.error('Error detecting forms:', error);
-    showToast('Error detecting forms: ' + error.message, 'error');
-  } finally {
-    detectBtn.disabled = false;
-    detectBtn.textContent = 'Detect Form Fields';
-  }
-}
-
-/**
- * Display detected form fields
- */
-function displayDetectedForms(questions) {
-  if (questions.length === 0) {
-    formsList.innerHTML = '<p class="empty-state">No form fields found.</p>';
-    return;
-  }
-
-  formsList.innerHTML = questions
-    .map(
-      (q, index) => `
-    <div class="form-item">
-      <div class="form-item-label">${escapeHtml(q.questionText)}</div>
-      <div class="form-item-actions">
-        <button class="btn btn-primary generate-answer-btn" data-field-id="${escapeHtml(q.fieldId)}" data-question="${escapeHtml(q.questionText)}" data-index="${index}">
-          Generate Answer
-        </button>
-      </div>
-    </div>
-  `
-    )
-    .join('');
-
-  // Add event listeners to all generate buttons
-  const generateBtns = formsList.querySelectorAll('.generate-answer-btn');
-  generateBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const fieldId = btn.getAttribute('data-field-id');
-      const question = btn.getAttribute('data-question');
-      generateAnswer(fieldId, question, btn);
-    });
-  });
-}
-
-/**
- * Generate answer for a form question
- */
-async function generateAnswer(fieldId, question, buttonElement) {
-  try {
-    console.log('[generateAnswer] Starting with:', { fieldId, question });
-
-    // Disable button and show loading state
-    if (buttonElement) {
-      buttonElement.disabled = true;
-      buttonElement.textContent = 'Generating...';
-    }
-
-    const settings = await chrome.storage.local.get('settings');
-    console.log('[generateAnswer] Settings loaded:', settings);
-
-    const customization = settings.settings?.customPromptStyle || {
-      tone: 'professional',
-      length: 'medium',
-      includeMetrics: true,
-    };
-
-    console.log('[generateAnswer] Sending message to background...');
-    const response = await chrome.runtime.sendMessage({
-      action: 'generateAnswer',
-      payload: {
-        fieldId,
-        question,
-        customization,
-      },
-    });
-
-    console.log('[generateAnswer] Response:', response);
-
-    if (response && response.success) {
-      showToast('Answer generated successfully!', 'success');
-      console.log('[generateAnswer] Answer:', response.data.answer);
-
-      // Show the generated answer in the UI
-      if (buttonElement) {
-        const formItem = buttonElement.closest('.form-item');
-        const answerDiv = document.createElement('div');
-        answerDiv.className = 'generated-answer';
-        answerDiv.innerHTML = `
-          <div class="answer-text">${escapeHtml(response.data.answer)}</div>
-          <div class="answer-actions">
-            <button class="btn btn-primary fill-btn" data-field-id="${escapeHtml(fieldId)}" data-answer="${escapeHtml(response.data.answer)}">Fill Field</button>
-            <button class="btn btn-secondary regenerate-btn" data-field-id="${escapeHtml(fieldId)}" data-question="${escapeHtml(question)}">Regenerate</button>
-          </div>
-        `;
-
-        // Remove any existing answer
-        const existingAnswer = formItem.querySelector('.generated-answer');
-        if (existingAnswer) {
-          existingAnswer.remove();
-        }
-
-        formItem.appendChild(answerDiv);
-
-        // Add event listeners
-        const fillBtn = answerDiv.querySelector('.fill-btn');
-        const regenerateBtn = answerDiv.querySelector('.regenerate-btn');
-
-        fillBtn.addEventListener('click', async () => {
-          await fillField(fieldId, response.data.answer);
-        });
-
-        regenerateBtn.addEventListener('click', () => {
-          generateAnswer(fieldId, question, buttonElement);
-        });
-      }
-    } else {
-      const errorMsg = response?.error || 'Unknown error';
-      showToast('Error: ' + errorMsg, 'error');
-      console.error('[generateAnswer] Error:', errorMsg);
-    }
-  } catch (error) {
-    console.error('[generateAnswer] Exception:', error);
-    showToast('Error generating answer: ' + error.message, 'error');
-  } finally {
-    // Re-enable button
-    if (buttonElement) {
-      buttonElement.disabled = false;
-      buttonElement.textContent = 'Generate Answer';
-    }
-  }
-}
-
-/**
- * Fill a form field with the generated answer
- */
-async function fillField(fieldId, answer) {
-  try {
-    console.log('[fillField] Filling field:', { fieldId, answer });
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    const response = await chrome.tabs.sendMessage(tab.id, {
-      action: 'fillField',
-      fieldSelector: `[data-field-id="${fieldId}"]`,
-      answer: answer,
-    });
-
-    if (response && response.success) {
-      showToast('Field filled successfully!', 'success');
-    } else {
-      showToast('Could not fill field. Try copying the answer manually.', 'warning');
-    }
-  } catch (error) {
-    console.error('[fillField] Error:', error);
-    showToast('Error filling field: ' + error.message, 'error');
-  }
 }
 
 /**

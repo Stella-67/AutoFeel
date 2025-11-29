@@ -80,7 +80,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleFillField(payload) {
-  const { fieldDescriptor, blockSnapshot } = payload;
+  const { fieldDescriptor, blockSnapshot, customPrompt } = payload;
 
   try {
     const result = await chrome.storage.local.get(['settings', 'profile']);
@@ -89,7 +89,7 @@ async function handleFillField(payload) {
     const llmConfig = settings.llm;
 
     if (llmConfig && llmConfig.apiKey) {
-      const value = await generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfig);
+      const value = await generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfig, customPrompt);
       return { status: 'success', value, reason: null };
     } else {
       const value = getFallbackValue(fieldDescriptor);
@@ -102,8 +102,8 @@ async function handleFillField(payload) {
   }
 }
 
-async function generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfig) {
-  const prompt = buildPrompt(fieldDescriptor, blockSnapshot, profile);
+async function generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfig, customPrompt) {
+  const prompt = buildPrompt(fieldDescriptor, blockSnapshot, profile, customPrompt);
 
   console.log('='.repeat(80));
   console.log('🤖 AutoFeel LLM Request');
@@ -112,6 +112,9 @@ async function generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfi
   console.log('📦 Field Type:', fieldDescriptor.type);
   console.log('🔧 Provider:', llmConfig.provider);
   console.log('🎯 Model:', llmConfig.model);
+  if (customPrompt) {
+    console.log('💬 Custom Instructions:', customPrompt);
+  }
   console.log('\n📨 Prompt sent to LLM:');
   console.log('-'.repeat(80));
   console.log(prompt);
@@ -136,7 +139,7 @@ async function generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfi
   return response;
 }
 
-function buildPrompt(fieldDescriptor, blockSnapshot, profile) {
+function buildPrompt(fieldDescriptor, blockSnapshot, profile, customPrompt) {
   const label = fieldDescriptor.label || 'this field';
   const currentValue = fieldDescriptor.current_value || '';
   const placeholder = fieldDescriptor.placeholder || '';
@@ -158,6 +161,10 @@ function buildPrompt(fieldDescriptor, blockSnapshot, profile) {
 
   if (blockSnapshot && blockSnapshot.fields && blockSnapshot.fields.length > 1) {
     prompt += `\nThis field is part of a group of ${blockSnapshot.fields.length} fields.\n`;
+  }
+
+  if (customPrompt) {
+    prompt += `\n⚠️ IMPORTANT - User's Custom Instructions:\n${customPrompt}\n`;
   }
 
   prompt += `\nPlease provide ONLY the value to fill in this field. Do not include any explanation, quotes, or additional text. Just the raw value.`;

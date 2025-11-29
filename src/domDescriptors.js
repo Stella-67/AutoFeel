@@ -1,7 +1,29 @@
 let autoIdCounter = 0;
 
 export function isFillableElement(el) {
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+  if (el.isContentEditable) {
+    return true;
+  }
+
+  if (el.tagName === 'TEXTAREA') {
+    return true;
+  }
+
+  if (el.tagName === 'INPUT') {
+    const type = (el.type || 'text').toLowerCase();
+    const textInputTypes = [
+      'text',
+      'email',
+      'tel',
+      'url',
+      'search',
+      'password',
+      'number'
+    ];
+    return textInputTypes.includes(type);
+  }
+
+  return false;
 }
 
 export function getBlockElement(el) {
