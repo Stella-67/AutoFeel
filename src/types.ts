@@ -147,7 +147,12 @@ export type MessageAction =
   | 'getSettings'
   | 'saveSettings'
   | 'saveLLMSettings'
+  | 'saveAutoFillSettings'
+  | 'saveStyleSettings'
   | 'approveAnswer'
+  | 'importData'
+  | 'clearAllData'
+  | 'exportData'
   | 'error';
 
 export interface Message {

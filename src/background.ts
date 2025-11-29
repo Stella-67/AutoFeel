@@ -8,10 +8,11 @@ import {
   updateLLMSettings,
   updateSettings,
   updateProfile,
+  clearAllData,
 } from './storage';
-import { LLMProvider, createFormAnswerSystemPrompt, buildProfileSummary, selectRelevantStories } from './llm';
+import { LLMProvider, createFormAnswerSystemPrompt } from './llm';
 import { Message, GeneratedAnswer, LLMRequest } from './types';
-import { v4 as uuidv4 } from 'uuid';
+import { generateUUID } from './utils';
 
 /**
  * Background Service Worker
@@ -103,8 +104,43 @@ async function handleMessage(request: Message, sender: any, sendResponse: any) {
         sendResponse({ success: true });
         break;
 
+      case 'saveAutoFillSettings':
+        const currentSettingsForAutoFill = await getSettings();
+        currentSettingsForAutoFill.autoFill = {
+          ...currentSettingsForAutoFill.autoFill,
+          ...request.payload,
+        };
+        await updateSettings(currentSettingsForAutoFill);
+        sendResponse({ success: true });
+        break;
+
+      case 'saveStyleSettings':
+        const currentSettingsForStyle = await getSettings();
+        currentSettingsForStyle.customPromptStyle = {
+          ...currentSettingsForStyle.customPromptStyle,
+          ...request.payload,
+        };
+        await updateSettings(currentSettingsForStyle);
+        sendResponse({ success: true });
+        break;
+
       case 'saveProfile':
         await updateProfile(request.payload);
+        sendResponse({ success: true });
+        break;
+
+      case 'importData':
+        if (request.payload.profile) {
+          await updateProfile(request.payload.profile);
+        }
+        if (request.payload.settings) {
+          await updateSettings(request.payload.settings);
+        }
+        sendResponse({ success: true });
+        break;
+
+      case 'clearAllData':
+        await clearAllData();
         sendResponse({ success: true });
         break;
 
@@ -173,10 +209,10 @@ async function handleGenerateAnswer(payload: any, sendResponse: any) {
     const response = await llmProvider.generateAnswer(llmRequest);
 
     // Create answer record
-    const answerId = uuidv4();
+    const answerId = generateUUID();
     const generatedAnswer: GeneratedAnswer = {
       id: answerId,
-      questionId: fieldId || uuidv4(),
+      questionId: fieldId || generateUUID(),
       originalQuestion: question,
       generatedAnswer: response.answer,
       timestamp: new Date().toISOString(),
@@ -284,24 +320,4 @@ async function handleApproveAnswer(payload: any, sendResponse: any) {
 function extractPageContext(): string {
   // Context should be passed from content script or popup
   return '';
-}
-
-/**
- * Utility to generate UUID (fallback if uuid library not available)
- */
-function generateUUID(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-// Replace uuid4 call with fallback if library not loaded
-declare global {
-  function uuidv4(): string;
-}
-
-if (typeof uuidv4 === 'undefined') {
-  (globalThis as any).uuidv4 = generateUUID;
 }
