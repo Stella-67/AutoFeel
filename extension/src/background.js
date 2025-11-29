@@ -1,6 +1,6 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FC_FILL_FIELD') {
-    handleFillField(message.payload, sender.tab.id)
+    handleFillField(message.payload, sender.tab && sender.tab.id)
       .then(response => sendResponse(response))
       .catch(err => {
         console.error("Background error:", err);

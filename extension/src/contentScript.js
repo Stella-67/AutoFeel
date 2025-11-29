@@ -1,374 +1,166 @@
-// 1. Inject CSS Styles
-const style = document.createElement('style');
-style.textContent = `
-.fc-ai-filling {
-  position: relative;
-  transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
-  transition: all 0.2s ease;
-  z-index: 9999;
-}
+import { injectAutoFeelStyles } from './styles.js';
+import { 
+  isFillableElement, 
+  getBlockElement, 
+  buildFieldDescriptor 
+} from './domDescriptors.js';
+import { initSelectionMode } from './selectionMode.js';
 
-.fc-ai-success {
-  animation: fcAiSuccessFlash 0.6s ease;
-}
+// 初始化样式
+injectAutoFeelStyles();
 
-.fc-ai-fail {
-  animation: fcAiShake 0.4s ease;
-}
-
-@keyframes fcAiSuccessFlash {
-  0%   { box-shadow: 0 0 0 rgba(0, 200, 0, 0.0); }
-  50%  { box-shadow: 0 0 0 3px rgba(0, 200, 0, 0.6); }
-  100% { box-shadow: 0 0 0 rgba(0, 200, 0, 0.0); }
-}
-
-@keyframes fcAiShake {
-  0%, 100% { transform: translateX(0); }
-  25%      { transform: translateX(-3px); }
-  75%      { transform: translateX(3px); }
-}
-
-.fc-selection-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.05);
-  cursor: crosshair;
-  z-index: 999999; /* above everything */
-}
-
-.fc-selection-rect {
-  position: absolute;
-  border: 1px dashed rgba(0, 120, 255, 0.8);
-  background: rgba(0, 120, 255, 0.1);
-}
-`;
-document.head.appendChild(style);
-
-// 2. State & Event Listeners
+// Alt+Click 模式的全局状态
 let isAltHeld = false;
-let autoIdCounter = 0;
 
-// Selection Mode State
-let selectionMode = false;
-let selectionOverlay = null;
-let selectionRectEl = null;
-let selectionStart = null;
-
+// Alt 键状态的事件监听器
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Alt') isAltHeld = true;
-  
-  // Toggle Selection Mode: Ctrl + Shift + A
-  if (e.code === 'KeyA' && e.ctrlKey && e.shiftKey) {
-    e.preventDefault();
-    if (!selectionMode) {
-      enterSelectionMode();
-    } else {
-      exitSelectionMode();
-    }
-  }
-  
-  // Escape to cancel selection mode
-  if (selectionMode && e.key === 'Escape') {
-    exitSelectionMode();
-  }
 });
 
 document.addEventListener('keyup', (e) => {
   if (e.key === 'Alt') isAltHeld = false;
 });
 
+// 点击事件监听器，用于检测 Alt+Click 是否作用于可填充元素
 document.addEventListener('click', (e) => {
-  // Check both our tracking state and the event state for robustness
+  // 同时检查追踪状态和事件属性以提高鲁棒性
   if ((isAltHeld || e.altKey) && isFillableElement(e.target)) {
     e.preventDefault();
     e.stopPropagation();
     handleAIClick(e.target);
   }
-}, true); // Use capture to ensure we catch it before others if possible
+}, true); // 使用捕获阶段，以确保尽早捕获事件
 
-function isFillableElement(el) {
-  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+/**
+ * 处理由 Alt+Click 触发的单个字段的 AI 填充逻辑。
+ * @param {Element} targetElement - 被点击的可填充元素 (input, textarea, select)。
+ */
+async function handleAIClick(targetElement) {
+  // 对于 Alt+Click，不发送 blockSnapshot
+  await handleAIInteraction(targetElement, null);
 }
 
-// --- Selection Mode Logic ---
-
-function enterSelectionMode() {
-  selectionMode = true;
-  
-  selectionOverlay = document.createElement('div');
-  selectionOverlay.className = 'fc-selection-overlay';
-  document.body.appendChild(selectionOverlay);
-  
-  selectionOverlay.addEventListener('mousedown', onSelectionMouseDown);
-  // We attach move/up to document to handle dragging outside the window/overlay bounds comfortably
-  document.addEventListener('mousemove', onSelectionMouseMove);
-  document.addEventListener('mouseup', onSelectionMouseUp);
-}
-
-function exitSelectionMode() {
-  if (selectionOverlay) {
-    selectionOverlay.remove();
-    selectionOverlay = null;
-  }
-  if (selectionRectEl) {
-    selectionRectEl.remove();
-    selectionRectEl = null;
-  }
-  
-  document.removeEventListener('mousemove', onSelectionMouseMove);
-  document.removeEventListener('mouseup', onSelectionMouseUp);
-  
-  selectionStart = null;
-  selectionMode = false;
-}
-
-function onSelectionMouseDown(e) {
-  if (e.button !== 0) return; // Left click only
-  e.preventDefault();
-  
-  selectionStart = { x: e.clientX, y: e.clientY };
-  
-  selectionRectEl = document.createElement('div');
-  selectionRectEl.className = 'fc-selection-rect';
-  selectionOverlay.appendChild(selectionRectEl);
-  
-  updateSelectionRect(e.clientX, e.clientY);
-}
-
-function onSelectionMouseMove(e) {
-  if (!selectionStart || !selectionRectEl) return;
-  e.preventDefault();
-  updateSelectionRect(e.clientX, e.clientY);
-}
-
-function onSelectionMouseUp(e) {
-  if (!selectionStart) return;
-  
-  // Calculate final rect dimensions
-  const x1 = selectionStart.x;
-  const y1 = selectionStart.y;
-  const x2 = e.clientX;
-  const y2 = e.clientY;
-  
-  const width = Math.abs(x2 - x1);
-  const height = Math.abs(y2 - y1);
-  
-  // Only process if selection is large enough (avoid accidental clicks)
-  if (width > 5 && height > 5) {
-    const rect = {
-      left: Math.min(x1, x2),
-      top: Math.min(y1, y2),
-      right: Math.min(x1, x2) + width,
-      bottom: Math.min(y1, y2) + height
-    };
-    handleSelectionRect(rect);
-  }
-  
-  exitSelectionMode();
-}
-
-function updateSelectionRect(currentX, currentY) {
-  const x1 = selectionStart.x;
-  const y1 = selectionStart.y;
-  const x2 = currentX;
-  const y2 = currentY;
-  
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const width = Math.abs(x2 - x1);
-  const height = Math.abs(y2 - y1);
-  
-  selectionRectEl.style.left = left + 'px';
-  selectionRectEl.style.top = top + 'px';
-  selectionRectEl.style.width = width + 'px';
-  selectionRectEl.style.height = height + 'px';
-}
-
-function getElementsInSelection(rect) {
-  const candidates = document.querySelectorAll('input, textarea, select');
-  return Array.from(candidates).filter(el => {
-    // Only visible elements
-    if (el.offsetParent === null) return false;
-    
-    const r = el.getBoundingClientRect();
-    // Check intersection
-    const horizontally = r.left < rect.right && r.right > rect.left;
-    const vertically   = r.top  < rect.bottom && r.bottom > rect.top;
-    return horizontally && vertically;
-  });
-}
-
-function buildBlockSnapshot(rect, elements) {
-  const fields = elements.map(el => buildFieldDescriptor(el));
-  return {
-    url: window.location.href,
-    title: document.title,
-    selection_rect: rect, // { left, top, right, bottom } in viewport coords
-    fields
-  };
-}
-
-async function handleSelectionRect(rect) {
-  const elements = getElementsInSelection(rect);
-  
-  if (!elements.length) {
-    console.log('[AutoFeel] No fields in selection.');
-    return;
-  }
-  
-  // Primary field is the first one found (usually top-left most in DOM order)
-  const primaryFieldEl = elements[0];
-  const fieldDescriptor = buildFieldDescriptor(primaryFieldEl);
-  const blockSnapshot = buildBlockSnapshot(rect, elements);
-  
-  // Visual effect on the primary field
-  const blockElement = getBlockElement(primaryFieldEl);
-  blockElement.classList.add('fc-ai-filling');
-
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: "FC_FILL_FIELD",
-      payload: {
-        fieldDescriptor,
-        blockSnapshot,
-        sessionId: null
-      }
+/**
+ * 初始化选择模式功能。
+ * 设置全局键盘监听器以切换选择模式 (Ctrl+Shift+A) 和 Escape 键取消。
+ * 在选择模式激活时，附加鼠标事件监听器。
+ * 它将一个回调函数传递给 `selectionMode.js`，该函数处理消息发送和响应。
+ */
+initSelectionMode({
+  onBlockSelected: async ({ elements, blockSnapshot }) => {
+    // 1. 选中动画：先给所有识别到的元素添加“选中”状态
+    elements.forEach(el => {
+      const block = getBlockElement(el);
+      block.classList.add('fc-ai-selected');
     });
 
-    handleResponse(primaryFieldEl, blockElement, response);
+    // 稍微停顿一下，让用户看清选中了哪些字段
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-  } catch (err) {
-    if (err.message.includes("Extension context invalidated")) {
-      console.error("AutoFeel: Extension context invalidated. Please reload the page.");
-      alert("AutoFeel: Please reload the page to reconnect to the updated extension.");
-    } else {
-      console.error("Extension messaging error:", err);
+    // 2. 串行队列：逐个处理字段
+    for (const element of elements) {
+      // 确保元素仍在文档中（防止页面动态变化导致报错）
+      if (!document.body.contains(element)) continue;
+
+      // 移除选中状态，准备开始填充
+      const block = getBlockElement(element);
+      block.classList.remove('fc-ai-selected');
+
+      // 滚动到当前处理的字段（可选，提升体验）
+      // element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // 执行 AI 交互（填充 + 动画）
+      await handleAIInteraction(element, blockSnapshot);
+
+      // 在处理下一个字段前，稍微停顿一下，形成“流式”节奏感
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
-    handleResponse(primaryFieldEl, blockElement, { status: 'fail', reason: 'extension_error' });
   }
-}
+});
 
-// 3. Core Logic
-async function handleAIClick(targetElement) {
+/**
+ * AI 交互的统一处理器，由 Alt+Click 和选择模式调用。
+ * 它准备字段描述符和可选的块快照，向后台脚本发送消息，并处理响应（视觉反馈）。
+ * @param {Element} targetElement - 交互的主要元素（例如，被点击的字段或选区中的第一个字段）。
+ * @param {object|null} blockSnapshot - 如果由选择模式触发，则为快照数据，否则为 null。
+ */
+async function handleAIInteraction(targetElement, blockSnapshot) {
   const block = getBlockElement(targetElement);
   
-  // Visual: Start Loading
+  // 视觉效果：添加 'filling' 类以指示 AI 正在工作
   block.classList.add('fc-ai-filling');
 
   const fieldDescriptor = buildFieldDescriptor(targetElement);
 
   try {
+    const payload = {
+      fieldDescriptor,
+      sessionId: null // 未来用作会话ID的占位符
+    };
+
+    // 如果提供了 blockSnapshot（来自选择模式），则将其包含在 payload 中
+    if (blockSnapshot) {
+      payload.blockSnapshot = blockSnapshot;
+    }
+
+    // 发送消息给后台脚本
     const response = await chrome.runtime.sendMessage({
       type: "FC_FILL_FIELD",
-      payload: {
-        fieldDescriptor,
-        sessionId: null
-      }
+      payload
     });
 
+    // 处理来自后台脚本的响应
     handleResponse(targetElement, block, response);
 
   } catch (err) {
-    if (err.message.includes("Extension context invalidated")) {
+    // 处理错误，特别是 'Extension context invalidated' 错误，这需要刷新页面
+    const errorMessage = err.message || String(err);
+    if (errorMessage.includes("Extension context invalidated")) {
       console.error("AutoFeel: Extension context invalidated. Please reload the page.");
-      alert("AutoFeel: Please reload the page to reconnect to the updated extension.");
+      alert("AutoFeel: 请刷新页面以重新连接到更新的扩展。");
     } else {
       console.error("Extension messaging error:", err);
     }
+    // 应用失败的视觉反馈
     handleResponse(targetElement, block, { status: 'fail', reason: 'extension_error' });
   }
 }
 
+/**
+ * 处理后台脚本的响应，并应用视觉反馈。
+ * 成功时设置字段值并播放相应动画；失败时播放失败动画。
+ * @param {Element} inputEl - 要更新的 input/textarea/select 元素。
+ * @param {Element} blockEl - 应用动画的块元素。
+ * @param {object} response - 来自后台脚本的响应对象 {status, value, reason}。
+ */
 function handleResponse(inputEl, blockEl, response) {
-  // Remove loading state
+  // 处理完成后移除 'filling' 类
   blockEl.classList.remove('fc-ai-filling');
 
   if (response && response.status === 'success') {
-    // Success Animation
+    // 成功状态：应用成功动画并更新输入值
     blockEl.classList.add('fc-ai-success');
     
-    // Set Value
     if (response.value !== null && response.value !== undefined) {
       inputEl.value = response.value;
-      // Dispatch events so frameworks (React/Angular) detect change
+      // 派发 'input' 和 'change' 事件，以通知框架（如 React, Vue）值已更改
       inputEl.dispatchEvent(new Event('input', { bubbles: true }));
       inputEl.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
+    // 动画结束后移除成功动画类
     setTimeout(() => {
       blockEl.classList.remove('fc-ai-success');
-    }, 600);
+    }, 600); // 匹配 CSS 动画时长
 
   } else {
-    // Fail Animation
+    // 失败状态：应用失败动画
     blockEl.classList.add('fc-ai-fail');
     console.log("AI Fill Failed:", response ? response.reason : "Unknown");
 
+    // 动画结束后移除失败动画类
     setTimeout(() => {
       blockEl.classList.remove('fc-ai-fail');
-    }, 400);
+    }, 400); // 匹配 CSS 动画时长
   }
-}
-
-// 4. Helpers
-function getBlockElement(el) {
-  return el.parentElement || el;
-}
-
-function buildFieldDescriptor(el) {
-  return {
-    dom_id: getDomId(el),
-    label: getLabel(el),
-    placeholder: el.placeholder || null,
-    type: el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'other'),
-    current_value: el.value || '',
-    page_url: window.location.href,
-    name: el.name || null
-  };
-}
-
-function getDomId(el) {
-  if (el.id) return el.id;
-  
-  if (el.dataset.fcAutoId) return el.dataset.fcAutoId;
-
-  const newId = `fc-auto-${++autoIdCounter}`;
-  el.dataset.fcAutoId = newId;
-  return newId;
-}
-
-function getLabel(el) {
-  // 1. Try <label for="id">
-  if (el.id) {
-    const label = document.querySelector(`label[for="${el.id}"]`);
-    if (label) return label.innerText.trim();
-  }
-
-  // 2. Try closest parent <label> (implicit association)
-  const parentLabel = el.closest('label');
-  if (parentLabel) {
-    // Clone and remove the input itself to get just the text
-    const clone = parentLabel.cloneNode(true);
-    const inputInClone = clone.querySelector('input, textarea');
-    if (inputInClone) inputInClone.remove();
-    return clone.innerText.trim();
-  }
-
-  // 3. Simple heuristic: Previous sibling or text in parent
-  // Look for previous element sibling that might be a label or span
-  let sibling = el.previousElementSibling;
-  if (sibling && (sibling.tagName === 'LABEL' || sibling.tagName === 'SPAN' || sibling.tagName === 'DIV')) {
-    return sibling.innerText.trim();
-  }
-
-  // 4. Text content of parent (excluding the input itself)
-  // This is risky as it might capture too much, but okay for MVP
-  if (el.parentElement) {
-    const parentText = el.parentElement.innerText;
-    // Very rough, might include the input value if not careful, but innerText usually handles value differently
-    return parentText.replace(el.value, '').trim().slice(0, 50); 
-  }
-
-  return null;
 }

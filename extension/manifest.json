@@ -12,12 +12,12 @@
     "http://localhost:*/*"
   ],
   "background": {
-    "service_worker": "src/background.js"
+    "service_worker": "dist/background.js"
   },
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["src/contentScript.js"],
+      "js": ["dist/contentScript.js"],
       "run_at": "document_end"
     }
   ],
