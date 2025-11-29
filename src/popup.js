@@ -5,8 +5,8 @@
 
 // DOM Elements - will be initialized after DOM loads
 let tabBtns, tabContents, settingsBtn;
-let personalForm, llmForm, autoFillForm, styleForm, valuesForm;
-let addEducationBtn, addExperienceBtn, addSkillBtn, addStoryBtn;
+let personalForm, llmForm, autoFillForm, styleForm;
+let addEducationBtn, addExperienceBtn, addResearchBtn, addOtherBtn, addDocumentBtn;
 let exportBtn, importBtn, clearBtn;
 let modal, closeBtn, toast;
 
@@ -21,12 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
   llmForm = document.getElementById('llmForm');
   autoFillForm = document.getElementById('autoFillForm');
   styleForm = document.getElementById('styleForm');
-  valuesForm = document.getElementById('valuesForm');
 
   addEducationBtn = document.getElementById('addEducationBtn');
   addExperienceBtn = document.getElementById('addExperienceBtn');
-  addSkillBtn = document.getElementById('addSkillBtn');
-  addStoryBtn = document.getElementById('addStoryBtn');
+  addResearchBtn = document.getElementById('addResearchBtn');
+  addOtherBtn = document.getElementById('addOtherBtn');
+  addDocumentBtn = document.getElementById('addDocumentBtn');
   exportBtn = document.getElementById('exportBtn');
   importBtn = document.getElementById('importBtn');
   clearBtn = document.getElementById('clearBtn');
@@ -71,13 +71,13 @@ function switchTab(tabName) {
 function setupEventListeners() {
   // Profile forms
   personalForm.addEventListener('submit', savePersonalInfo);
-  valuesForm.addEventListener('submit', saveValues);
 
   // Add buttons
   addEducationBtn.addEventListener('click', () => openEducationModal());
   addExperienceBtn.addEventListener('click', () => openExperienceModal());
-  addSkillBtn.addEventListener('click', () => openSkillModal());
-  addStoryBtn.addEventListener('click', () => openStoryModal());
+  addResearchBtn.addEventListener('click', () => openResearchModal());
+  addOtherBtn.addEventListener('click', () => openOtherModal());
+  addDocumentBtn.addEventListener('click', uploadDocument);
 
   // Settings forms
   llmForm.addEventListener('submit', saveLLMSettings);
@@ -120,19 +120,16 @@ async function loadProfile() {
       document.getElementById('location').value = profile.personal?.location || '';
       document.getElementById('summary').value = profile.personal?.summary || '';
 
-      // Values
-      document.getElementById('careerGoals').value = profile.values?.careerGoals || '';
-      document.getElementById('strengths').value = profile.values?.strengths?.join(', ') || '';
-      document.getElementById('values').value = profile.values?.valuesImportant?.join(', ') || '';
-
       // Display education items
       displayEducationList(profile.education || []);
       // Display experience items
       displayExperienceList(profile.experience || []);
-      // Display skills
-      displaySkillsList(profile.skills || []);
-      // Display stories
-      displayStoriesList(profile.stories || []);
+      // Display research items
+      displayResearchList(profile.research || []);
+      // Display other items
+      displayOtherList(profile.other || []);
+      // Display documents
+      displayDocumentsList(profile.documents || []);
     }
   } catch (error) {
     console.error('Error loading profile:', error);
@@ -206,39 +203,6 @@ async function savePersonalInfo(e) {
   }
 }
 
-/**
- * Save values and goals
- */
-async function saveValues(e) {
-  e.preventDefault();
-
-  const values = {
-    careerGoals: document.getElementById('careerGoals').value,
-    strengths: document.getElementById('strengths').value.split(',').map((s) => s.trim()),
-    valuesImportant: document.getElementById('values').value.split(',').map((v) => v.trim()),
-    motivation: [],
-  };
-
-  try {
-    const profile = (
-      await chrome.runtime.sendMessage({
-        action: 'getProfile',
-      })
-    ).data;
-
-    profile.values = values;
-
-    await chrome.runtime.sendMessage({
-      action: 'saveProfile',
-      payload: profile,
-    });
-
-    showToast('Values saved!', 'success');
-  } catch (error) {
-    console.error('Error saving values:', error);
-    showToast('Error saving values', 'error');
-  }
-}
 
 /**
  * Save LLM settings
@@ -393,27 +357,27 @@ function displayExperienceList(experience) {
 }
 
 /**
- * Display skills list
+ * Display research list
  */
-function displaySkillsList(skills) {
-  const list = document.getElementById('skillsList');
+function displayResearchList(research) {
+  const list = document.getElementById('researchList');
 
-  if (skills.length === 0) {
-    list.innerHTML = '<p class="empty-state">No skills added yet.</p>';
+  if (research.length === 0) {
+    list.innerHTML = '<p class="empty-state">No research added yet.</p>';
     return;
   }
 
-  list.innerHTML = skills
+  list.innerHTML = research
     .map(
-      (skill) => `
+      (item) => `
     <div class="list-item">
       <div class="list-item-content">
-        <div class="list-item-title">${escapeHtml(skill.name)}</div>
-        <div class="list-item-subtitle">${skill.category} - ${skill.proficiency}</div>
+        <div class="list-item-title">${escapeHtml(item.topic)}</div>
+        <div class="list-item-subtitle">${escapeHtml(item.description.substring(0, 100))}${item.description.length > 100 ? '...' : ''}</div>
       </div>
       <div class="list-item-actions">
-        <button class="btn btn-secondary" onclick="editSkill('${skill.id}')">Edit</button>
-        <button class="btn btn-danger" onclick="deleteSkill('${skill.id}')">Delete</button>
+        <button class="btn btn-secondary" onclick="editResearch('${item.id}')">Edit</button>
+        <button class="btn btn-danger" onclick="deleteResearch('${item.id}')">Delete</button>
       </div>
     </div>
   `
@@ -422,27 +386,27 @@ function displaySkillsList(skills) {
 }
 
 /**
- * Display stories list
+ * Display other list
  */
-function displayStoriesList(stories) {
-  const list = document.getElementById('storiesList');
+function displayOtherList(other) {
+  const list = document.getElementById('otherList');
 
-  if (stories.length === 0) {
-    list.innerHTML = '<p class="empty-state">No stories added yet.</p>';
+  if (other.length === 0) {
+    list.innerHTML = '<p class="empty-state">No items added yet.</p>';
     return;
   }
 
-  list.innerHTML = stories
+  list.innerHTML = other
     .map(
-      (story) => `
+      (item) => `
     <div class="list-item">
       <div class="list-item-content">
-        <div class="list-item-title">${escapeHtml(story.title)}</div>
-        <div class="list-item-subtitle">${story.tags.join(', ')} • Used ${story.timesUsed} times</div>
+        <div class="list-item-title">${escapeHtml(item.topic)}</div>
+        <div class="list-item-subtitle">${escapeHtml(item.description.substring(0, 100))}${item.description.length > 100 ? '...' : ''}</div>
       </div>
       <div class="list-item-actions">
-        <button class="btn btn-secondary" onclick="editStory('${story.id}')">Edit</button>
-        <button class="btn btn-danger" onclick="deleteStory('${story.id}')">Delete</button>
+        <button class="btn btn-secondary" onclick="editOther('${item.id}')">Edit</button>
+        <button class="btn btn-danger" onclick="deleteOther('${item.id}')">Delete</button>
       </div>
     </div>
   `
@@ -456,7 +420,58 @@ function displayStoriesList(stories) {
 function openEducationModal(id = null) {
   modal.classList.add('show');
   document.getElementById('modalTitle').textContent = id ? 'Edit Education' : 'Add Education';
-  // TODO: Load and display education form
+
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = `
+    <div class="form-group">
+      <label>Degree</label>
+      <input type="text" id="eduDegree" placeholder="e.g., Bachelor of Science" required>
+    </div>
+    <div class="form-group">
+      <label>Field of Study</label>
+      <input type="text" id="eduField" placeholder="e.g., Computer Science" required>
+    </div>
+    <div class="form-group">
+      <label>Institution</label>
+      <input type="text" id="eduInstitution" placeholder="e.g., Stanford University" required>
+    </div>
+    <div class="form-group">
+      <label>Graduation Year</label>
+      <input type="number" id="eduYear" placeholder="e.g., 2020" required>
+    </div>
+    <div class="form-group">
+      <label>GPA (optional)</label>
+      <input type="text" id="eduGpa" placeholder="e.g., 3.8/4.0">
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  `;
+
+  modalForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const education = {
+      id: id || Date.now().toString(),
+      degree: document.getElementById('eduDegree').value,
+      field: document.getElementById('eduField').value,
+      institution: document.getElementById('eduInstitution').value,
+      graduationYear: document.getElementById('eduYear').value,
+      gpa: document.getElementById('eduGpa').value || null
+    };
+
+    const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+    if (!profile.education) profile.education = [];
+
+    if (id) {
+      const index = profile.education.findIndex(e => e.id === id);
+      profile.education[index] = education;
+    } else {
+      profile.education.push(education);
+    }
+
+    await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+    showToast('Education saved!', 'success');
+    displayEducationList(profile.education);
+    modal.classList.remove('show');
+  };
 }
 
 /**
@@ -465,25 +480,143 @@ function openEducationModal(id = null) {
 function openExperienceModal(id = null) {
   modal.classList.add('show');
   document.getElementById('modalTitle').textContent = id ? 'Edit Experience' : 'Add Experience';
-  // TODO: Load and display experience form
+
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = `
+    <div class="form-group">
+      <label>Job Title</label>
+      <input type="text" id="expTitle" placeholder="e.g., Software Engineer" required>
+    </div>
+    <div class="form-group">
+      <label>Company</label>
+      <input type="text" id="expCompany" placeholder="e.g., Google" required>
+    </div>
+    <div class="form-group">
+      <label>Duration</label>
+      <input type="text" id="expDuration" placeholder="e.g., Jan 2020 - Dec 2022" required>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="expDescription" placeholder="Brief description of your role and achievements..." rows="4"></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  `;
+
+  modalForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const experience = {
+      id: id || Date.now().toString(),
+      title: document.getElementById('expTitle').value,
+      company: document.getElementById('expCompany').value,
+      duration: document.getElementById('expDuration').value,
+      description: document.getElementById('expDescription').value
+    };
+
+    const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+    if (!profile.experience) profile.experience = [];
+
+    if (id) {
+      const index = profile.experience.findIndex(e => e.id === id);
+      profile.experience[index] = experience;
+    } else {
+      profile.experience.push(experience);
+    }
+
+    await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+    showToast('Experience saved!', 'success');
+    displayExperienceList(profile.experience);
+    modal.classList.remove('show');
+  };
 }
 
 /**
- * Open skill modal
+ * Open research modal
  */
-function openSkillModal(id = null) {
+function openResearchModal(id = null) {
   modal.classList.add('show');
-  document.getElementById('modalTitle').textContent = id ? 'Edit Skill' : 'Add Skill';
-  // TODO: Load and display skill form
+  document.getElementById('modalTitle').textContent = id ? 'Edit Research' : 'Add Research';
+
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = `
+    <div class="form-group">
+      <label>Research Topic</label>
+      <input type="text" id="researchTopic" placeholder="e.g., Machine Learning for Healthcare" required>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="researchDescription" placeholder="Describe your research, methodology, findings, etc..." rows="8" required></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  `;
+
+  modalForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const research = {
+      id: id || Date.now().toString(),
+      topic: document.getElementById('researchTopic').value,
+      description: document.getElementById('researchDescription').value
+    };
+
+    const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+    if (!profile.research) profile.research = [];
+
+    if (id) {
+      const index = profile.research.findIndex(r => r.id === id);
+      profile.research[index] = research;
+    } else {
+      profile.research.push(research);
+    }
+
+    await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+    showToast('Research saved!', 'success');
+    displayResearchList(profile.research);
+    modal.classList.remove('show');
+  };
 }
 
 /**
- * Open story modal
+ * Open other modal
  */
-function openStoryModal(id = null) {
+function openOtherModal(id = null) {
   modal.classList.add('show');
-  document.getElementById('modalTitle').textContent = id ? 'Edit Story' : 'Add Story';
-  // TODO: Load and display story form
+  document.getElementById('modalTitle').textContent = id ? 'Edit Item' : 'Add Item';
+
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = `
+    <div class="form-group">
+      <label>Topic</label>
+      <input type="text" id="otherTopic" placeholder="e.g., Best Paper Award, AWS Certification, Personal Project..." required>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="otherDescription" placeholder="Provide details about this item..." rows="6" required></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Save</button>
+  `;
+
+  modalForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const other = {
+      id: id || Date.now().toString(),
+      topic: document.getElementById('otherTopic').value,
+      description: document.getElementById('otherDescription').value
+    };
+
+    const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+    if (!profile.other) profile.other = [];
+
+    if (id) {
+      const index = profile.other.findIndex(o => o.id === id);
+      profile.other[index] = other;
+    } else {
+      profile.other.push(other);
+    }
+
+    await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+    showToast('Item saved!', 'success');
+    displayOtherList(profile.other);
+    modal.classList.remove('show');
+  };
 }
 
 /**
@@ -616,18 +749,117 @@ function deleteExperience(id) {
   console.log('Delete experience:', id);
 }
 
-function editSkill(id) {
-  console.log('Edit skill:', id);
+function editResearch(id) {
+  console.log('Edit research:', id);
 }
 
-function deleteSkill(id) {
-  console.log('Delete skill:', id);
+function deleteResearch(id) {
+  console.log('Delete research:', id);
 }
 
-function editStory(id) {
-  console.log('Edit story:', id);
+function editOther(id) {
+  console.log('Edit other:', id);
 }
 
-function deleteStory(id) {
-  console.log('Delete story:', id);
+function deleteOther(id) {
+  console.log('Delete other:', id);
+}
+
+/**
+ * Upload document
+ */
+function uploadDocument() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.txt,.md,.pdf';
+
+  input.addEventListener('change', async (e) => {
+    try {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const content = event.target.result;
+
+        const document = {
+          id: Date.now().toString(),
+          name: file.name,
+          type: file.type || 'text/plain',
+          content: content,
+          uploadedAt: new Date().toISOString()
+        };
+
+        const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+        if (!profile.documents) profile.documents = [];
+        profile.documents.push(document);
+
+        await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+        showToast('Document uploaded successfully!', 'success');
+        displayDocumentsList(profile.documents);
+      };
+
+      reader.readAsText(file);
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      showToast('Error uploading document', 'error');
+    }
+  });
+
+  input.click();
+}
+
+/**
+ * Display documents list
+ */
+function displayDocumentsList(documents) {
+  const list = document.getElementById('documentsList');
+
+  if (documents.length === 0) {
+    list.innerHTML = '<p class="empty-state">No documents uploaded yet.</p>';
+    return;
+  }
+
+  list.innerHTML = documents
+    .map(
+      (doc) => `
+    <div class="list-item">
+      <div class="list-item-content">
+        <div class="list-item-title">${escapeHtml(doc.name)}</div>
+        <div class="list-item-subtitle">${new Date(doc.uploadedAt).toLocaleDateString()} • ${(doc.content.length / 1024).toFixed(1)}KB</div>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn btn-danger" data-doc-id="${doc.id}">Delete</button>
+      </div>
+    </div>
+  `
+    )
+    .join('');
+
+  // Add event listeners to delete buttons
+  list.querySelectorAll('.btn-danger').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const docId = btn.getAttribute('data-doc-id');
+      await deleteDocument(docId);
+    });
+  });
+}
+
+/**
+ * Delete document
+ */
+async function deleteDocument(id) {
+  if (!confirm('Are you sure you want to delete this document?')) return;
+
+  try {
+    const profile = (await chrome.runtime.sendMessage({ action: 'getProfile' })).data;
+    profile.documents = (profile.documents || []).filter(d => d.id !== id);
+
+    await chrome.runtime.sendMessage({ action: 'saveProfile', payload: profile });
+    showToast('Document deleted!', 'success');
+    displayDocumentsList(profile.documents);
+  } catch (error) {
+    console.error('Error deleting document:', error);
+    showToast('Error deleting document', 'error');
+  }
 }

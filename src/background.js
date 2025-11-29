@@ -115,6 +115,9 @@ async function generateWithLLM(fieldDescriptor, blockSnapshot, profile, llmConfi
   if (customPrompt) {
     console.log('💬 Custom Instructions:', customPrompt);
   }
+  if (profile.documents && profile.documents.length > 0) {
+    console.log('📄 Reference Documents:', profile.documents.map(d => d.name).join(', '));
+  }
   console.log('\n📨 Prompt sent to LLM:');
   console.log('-'.repeat(80));
   console.log(prompt);
@@ -161,6 +164,18 @@ function buildPrompt(fieldDescriptor, blockSnapshot, profile, customPrompt) {
 
   if (blockSnapshot && blockSnapshot.fields && blockSnapshot.fields.length > 1) {
     prompt += `\nThis field is part of a group of ${blockSnapshot.fields.length} fields.\n`;
+  }
+
+  if (profile.documents && profile.documents.length > 0) {
+    prompt += `\n📄 Reference Documents (SOP, Essays, etc.):\n`;
+    profile.documents.forEach(doc => {
+      prompt += `\n--- ${doc.name} ---\n`;
+      prompt += doc.content.substring(0, 2000);
+      if (doc.content.length > 2000) {
+        prompt += '\n... (truncated)';
+      }
+      prompt += '\n';
+    });
   }
 
   if (customPrompt) {
