@@ -11,7 +11,19 @@ const elements = {
   apiKeySection: document.getElementById('api-key-section'),
   customEndpointSection: document.getElementById('custom-endpoint-section'),
   modelSection: document.getElementById('model-section'),
-  promptSection: document.getElementById('prompt-section')
+  promptSection: document.getElementById('prompt-section'),
+  // Token usage elements
+  resetStatsBtn: document.getElementById('reset-stats-btn'),
+  totalInput: document.getElementById('total-input'),
+  totalOutput: document.getElementById('total-output'),
+  totalTokens: document.getElementById('total-tokens'),
+  openaiTokens: document.getElementById('openai-tokens'),
+  openaiRequests: document.getElementById('openai-requests'),
+  anthropicTokens: document.getElementById('anthropic-tokens'),
+  anthropicRequests: document.getElementById('anthropic-requests'),
+  customTokens: document.getElementById('custom-tokens'),
+  customRequests: document.getElementById('custom-requests'),
+  lastUpdated: document.getElementById('last-updated')
 };
 
 async function loadSettings() {
@@ -184,6 +196,59 @@ function toggleApiKey() {
   elements.toggleKey.textContent = isPassword ? 'Hide' : 'Show';
 }
 
+async function loadTokenUsage() {
+  const { tokenUsage } = await chrome.storage.local.get(['tokenUsage']);
+
+  if (!tokenUsage) {
+    // No data yet
+    return;
+  }
+
+  // Update total stats
+  elements.totalInput.textContent = tokenUsage.total.inputTokens.toLocaleString();
+  elements.totalOutput.textContent = tokenUsage.total.outputTokens.toLocaleString();
+  elements.totalTokens.textContent = tokenUsage.total.totalTokens.toLocaleString();
+
+  // Update provider stats
+  if (tokenUsage.byProvider) {
+    elements.openaiTokens.textContent = tokenUsage.byProvider.openai.totalTokens.toLocaleString();
+    elements.openaiRequests.textContent = tokenUsage.byProvider.openai.requestCount;
+
+    elements.anthropicTokens.textContent = tokenUsage.byProvider.anthropic.totalTokens.toLocaleString();
+    elements.anthropicRequests.textContent = tokenUsage.byProvider.anthropic.requestCount;
+
+    elements.customTokens.textContent = tokenUsage.byProvider.custom.totalTokens.toLocaleString();
+    elements.customRequests.textContent = tokenUsage.byProvider.custom.requestCount;
+  }
+
+  // Update last updated time
+  if (tokenUsage.lastUpdated) {
+    const date = new Date(tokenUsage.lastUpdated);
+    elements.lastUpdated.textContent = date.toLocaleString();
+  }
+}
+
+async function resetTokenUsage() {
+  if (!confirm('Are you sure you want to reset all token usage statistics?')) {
+    return;
+  }
+
+  showStatus('Resetting statistics...', 'info');
+
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'RESET_TOKEN_USAGE' });
+
+    if (result.success) {
+      showStatus('Statistics reset successfully!', 'success');
+      await loadTokenUsage();
+    } else {
+      showStatus(`Failed to reset: ${result.error}`, 'error');
+    }
+  } catch (error) {
+    showStatus(`Reset error: ${error.message}`, 'error');
+  }
+}
+
 elements.llmProvider.addEventListener('change', () => {
   updateFormVisibility();
   fillDefaultValues(elements.llmProvider.value);
@@ -192,5 +257,14 @@ elements.llmProvider.addEventListener('change', () => {
 elements.toggleKey.addEventListener('click', toggleApiKey);
 elements.testBtn.addEventListener('click', testAPI);
 elements.saveBtn.addEventListener('click', saveSettings);
+elements.resetStatsBtn.addEventListener('click', resetTokenUsage);
+
+// Listen for storage changes to update stats in real-time
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === 'local' && changes.tokenUsage) {
+    loadTokenUsage();
+  }
+});
 
 loadSettings();
+loadTokenUsage();

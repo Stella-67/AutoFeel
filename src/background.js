@@ -48,7 +48,14 @@ async function handleSendToLLM() {
       });
 
       await showResult(tab.id, pageContent, llmResponse.data, config);
-      await notifyTab(tab.id, 'LLM response received! Press Alt+V on a form to auto-fill.', 'success');
+
+      // Build success message with token usage
+      let successMessage = 'LLM response received! Press Alt+V on a form to auto-fill.';
+      if (llmResponse.data.tokenUsage) {
+        successMessage += ` (Used ${llmResponse.data.tokenUsage.totalTokens.toLocaleString()} tokens: ${llmResponse.data.tokenUsage.inputTokens.toLocaleString()} in, ${llmResponse.data.tokenUsage.outputTokens.toLocaleString()} out)`;
+      }
+
+      await notifyTab(tab.id, successMessage, 'success');
     } else {
       await notifyTab(tab.id, `LLM request failed: ${llmResponse.error}`, 'error');
     }
@@ -119,7 +126,13 @@ async function handleAutoFillForm() {
         answers: answers.data
       });
 
-      await notifyTab(tab.id, 'Form filled successfully!', 'success');
+      // Build success message with token usage
+      let successMessage = 'Form filled successfully!';
+      if (answers.tokenUsage) {
+        successMessage += ` (Used ${answers.tokenUsage.totalTokens.toLocaleString()} tokens: ${answers.tokenUsage.inputTokens.toLocaleString()} in, ${answers.tokenUsage.outputTokens.toLocaleString()} out)`;
+      }
+
+      await notifyTab(tab.id, successMessage, 'success');
     } else {
       await notifyTab(tab.id, `Failed to generate answers: ${answers.error}`, 'error');
     }
@@ -172,11 +185,18 @@ async function sendToLLM(pageContent, config) {
     const data = await response.json();
     const content = extractLLMResponse(llmProvider, data);
 
+    // Extract and save token usage
+    const tokenUsage = extractTokenUsage(llmProvider, data);
+    if (tokenUsage) {
+      await updateTokenUsage(llmProvider, tokenUsage);
+    }
+
     return {
       success: true,
       data: {
         content: content,
-        raw: data
+        raw: data,
+        tokenUsage: tokenUsage
       }
     };
   } catch (error) {
@@ -402,6 +422,79 @@ function extractLLMResponse(provider, data) {
   return 'Unable to parse response content';
 }
 
+function extractTokenUsage(provider, data) {
+  try {
+    if (provider === 'openai' || provider === 'custom') {
+      // OpenAI format: { usage: { prompt_tokens, completion_tokens, total_tokens } }
+      const usage = data.usage;
+      if (usage) {
+        return {
+          inputTokens: usage.prompt_tokens || 0,
+          outputTokens: usage.completion_tokens || 0,
+          totalTokens: usage.total_tokens || 0
+        };
+      }
+    } else if (provider === 'anthropic') {
+      // Anthropic format: { usage: { input_tokens, output_tokens } }
+      const usage = data.usage;
+      if (usage) {
+        return {
+          inputTokens: usage.input_tokens || 0,
+          outputTokens: usage.output_tokens || 0,
+          totalTokens: (usage.input_tokens || 0) + (usage.output_tokens || 0)
+        };
+      }
+    }
+  } catch (error) {
+    console.error('[AutoFeel] Failed to extract token usage:', error);
+  }
+  return null;
+}
+
+async function updateTokenUsage(provider, usage) {
+  try {
+    // Get current token usage stats
+    const { tokenUsage } = await chrome.storage.local.get(['tokenUsage']);
+
+    // Initialize if not exists
+    const stats = tokenUsage || {
+      total: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      },
+      byProvider: {
+        openai: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+        anthropic: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+        custom: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
+      },
+      lastUpdated: null
+    };
+
+    // Update total
+    stats.total.inputTokens += usage.inputTokens;
+    stats.total.outputTokens += usage.outputTokens;
+    stats.total.totalTokens += usage.totalTokens;
+
+    // Update by provider
+    if (stats.byProvider[provider]) {
+      stats.byProvider[provider].inputTokens += usage.inputTokens;
+      stats.byProvider[provider].outputTokens += usage.outputTokens;
+      stats.byProvider[provider].totalTokens += usage.totalTokens;
+      stats.byProvider[provider].requestCount += 1;
+    }
+
+    stats.lastUpdated = new Date().toISOString();
+
+    // Save updated stats
+    await chrome.storage.local.set({ tokenUsage: stats });
+
+    console.log('[AutoFeel] Token usage updated:', usage);
+  } catch (error) {
+    console.error('[AutoFeel] Failed to update token usage:', error);
+  }
+}
+
 async function generateFormAnswers(formFields, savedContext, config) {
   const { llmProvider, apiKey, apiEndpoint, modelName } = config;
 
@@ -458,6 +551,12 @@ Please generate appropriate answers for each field based on the context provided
     const data = await response.json();
     const content = extractLLMResponse(llmProvider, data);
 
+    // Extract and save token usage
+    const tokenUsage = extractTokenUsage(llmProvider, data);
+    if (tokenUsage) {
+      await updateTokenUsage(llmProvider, tokenUsage);
+    }
+
     // Parse JSON response
     console.log('[AutoFeel] LLM raw response:', content);
 
@@ -476,7 +575,8 @@ Please generate appropriate answers for each field based on the context provided
 
     return {
       success: true,
-      data: answers
+      data: answers,
+      tokenUsage: tokenUsage
     };
   } catch (error) {
     return {
@@ -584,5 +684,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'TEST_API') {
     testAPIConnection(request.config).then(sendResponse);
     return true;
+  } else if (request.type === 'RESET_TOKEN_USAGE') {
+    resetTokenUsage().then(sendResponse);
+    return true;
   }
 });
+
+async function resetTokenUsage() {
+  try {
+    await chrome.storage.local.set({
+      tokenUsage: {
+        total: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0
+        },
+        byProvider: {
+          openai: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+          anthropic: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+          custom: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
+        },
+        lastUpdated: new Date().toISOString()
+      }
+    });
+    console.log('[AutoFeel] Token usage reset');
+    return { success: true };
+  } catch (error) {
+    console.error('[AutoFeel] Failed to reset token usage:', error);
+    return { success: false, error: error.message };
+  }
+}

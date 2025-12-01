@@ -48,6 +48,53 @@
 
     <div id="status-message" class="status-message"></div>
 
+    <div class="token-usage-section">
+      <div class="section-header">
+        <h3>Token Usage Statistics</h3>
+        <button id="reset-stats-btn" class="btn-small btn-reset">Reset</button>
+      </div>
+
+      <div id="token-stats" class="token-stats">
+        <div class="stats-total">
+          <h4>Total Usage</h4>
+          <div class="stat-item">
+            <span class="stat-label">Input Tokens:</span>
+            <span class="stat-value" id="total-input">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Output Tokens:</span>
+            <span class="stat-value" id="total-output">0</span>
+          </div>
+          <div class="stat-item total">
+            <span class="stat-label">Total Tokens:</span>
+            <span class="stat-value" id="total-tokens">0</span>
+          </div>
+        </div>
+
+        <div class="stats-by-provider">
+          <h4>By Provider</h4>
+          <div class="provider-stats">
+            <div class="provider-item">
+              <strong>OpenAI:</strong>
+              <span id="openai-tokens">0</span> tokens (<span id="openai-requests">0</span> requests)
+            </div>
+            <div class="provider-item">
+              <strong>Anthropic:</strong>
+              <span id="anthropic-tokens">0</span> tokens (<span id="anthropic-requests">0</span> requests)
+            </div>
+            <div class="provider-item">
+              <strong>Custom:</strong>
+              <span id="custom-tokens">0</span> tokens (<span id="custom-requests">0</span> requests)
+            </div>
+          </div>
+        </div>
+
+        <div class="last-updated">
+          Last updated: <span id="last-updated">Never</span>
+        </div>
+      </div>
+    </div>
+
     <div class="usage-info">
       <h3>Usage Instructions</h3>
       <p>1. Select LLM provider and enter API Key</p>

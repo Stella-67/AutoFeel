@@ -188,3 +188,131 @@ kbd {
   border-radius: 3px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
 }
+
+/* Token Usage Statistics */
+.token-usage-section {
+  margin-top: 24px;
+  padding: 16px;
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-header h3 {
+  margin-bottom: 0;
+  color: #1a1a1a;
+  font-size: 15px;
+}
+
+.btn-reset {
+  background-color: #ff5252;
+  color: white;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  position: static;
+  margin-top: 0;
+}
+
+.btn-reset:hover {
+  background-color: #e04444;
+}
+
+.token-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stats-total,
+.stats-by-provider {
+  background-color: white;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+
+.stats-total h4,
+.stats-by-provider h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.stat-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.stat-label {
+  color: #666;
+  font-weight: 500;
+}
+
+.stat-value {
+  color: #1a1a1a;
+  font-weight: 600;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+}
+
+.stat-item.total {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+  font-weight: 600;
+}
+
+.stat-item.total .stat-value {
+  color: #2196F3;
+  font-size: 14px;
+}
+
+.provider-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  background-color: #fafafa;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.provider-item strong {
+  color: #555;
+  min-width: 80px;
+}
+
+.provider-item span {
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  color: #1a1a1a;
+}
+
+.last-updated {
+  font-size: 11px;
+  color: #999;
+  text-align: right;
+  padding-top: 8px;
+  border-top: 1px solid #e8e8e8;
+}
+
+.last-updated span {
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+}
