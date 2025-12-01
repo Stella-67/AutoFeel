@@ -116,14 +116,14 @@ function displayDocumentList(documents) {
 
     return `
       <div class="document-item ${starred}" data-doc-id="${doc.doc_id}">
-        <div class="doc-title">${escapeHtml(doc.title)}</div>
+        <div class="doc-title">${Utils.escapeHtml(doc.title)}</div>
         <div class="doc-meta">
           <span>${date}</span>
           <span>${doc.metadata.chunk_count} chunks</span>
         </div>
         ${tags.length > 0 ? `
           <div class="doc-tags">
-            ${tags.slice(0, 3).map(tag => `<span class="doc-tag">${escapeHtml(tag)}</span>`).join('')}
+            ${tags.slice(0, 3).map(tag => `<span class="doc-tag">${Utils.escapeHtml(tag)}</span>`).join('')}
           </div>
         ` : ''}
       </div>
@@ -208,8 +208,8 @@ function displayDocumentPreview(doc) {
 function displayTags(tags) {
   const container = document.getElementById('tags-container');
   container.innerHTML = tags.map(tag => `
-    <span class="tag" data-tag="${escapeHtml(tag)}">
-      ${escapeHtml(tag)}
+    <span class="tag" data-tag="${Utils.escapeHtml(tag)}">
+      ${Utils.escapeHtml(tag)}
       <span class="remove-tag">×</span>
     </span>
   `).join('');
@@ -260,7 +260,7 @@ function displayChunks(chunks) {
           <span class="chunk-id">Chunk ${chunk.order + 1}</span>
           <span class="chunk-importance ${importanceClass}">${importancePercent}%</span>
         </div>
-        <div class="chunk-text">${escapeHtml(chunk.text)}</div>
+        <div class="chunk-text">${Utils.escapeHtml(chunk.text)}</div>
         <div class="chunk-meta">
           ${chunk.metadata.word_count} words | ${chunk.metadata.sentence_count} sentences
           ${chunk.embedding ? ' | ✓ Embedded' : ''}
@@ -294,7 +294,7 @@ function displayKeyPoints(points) {
   const container = document.getElementById('key-points-list');
   container.innerHTML = points.map((point, index) => `
     <div class="editable-list-item" data-index="${index}">
-      <input type="text" value="${escapeHtml(point)}">
+      <input type="text" value="${Utils.escapeHtml(point)}">
       <button class="remove-key-point">×</button>
     </div>
   `).join('');
@@ -319,9 +319,9 @@ function displayEntities(entities) {
 
   container.innerHTML = entityTypes.map(type => `
     <div class="entity-group">
-      <h4>${capitalize(type)}</h4>
+      <h4>${Utils.capitalize(type)}</h4>
       <div class="entity-tags">
-        ${entities[type].map(entity => `<span class="entity-tag">${escapeHtml(entity)}</span>`).join('')}
+        ${entities[type].map(entity => `<span class="entity-tag">${Utils.escapeHtml(entity)}</span>`).join('')}
       </div>
     </div>
   `).join('');
@@ -586,17 +586,6 @@ function showNotification(message, type = 'info') {
   if (type === 'error') {
     alert(message);
   }
-}
-
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 // Placeholder functions for unimplemented features

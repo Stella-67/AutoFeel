@@ -1,5 +1,5 @@
 // Import database module
-importScripts('db.js');
+importScripts('src/db.js');
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'send-to-llm') {
@@ -38,7 +38,7 @@ async function handleSendToLLM() {
     // === Text Cleaning Pipeline ===
 
     // Step 1: LLM Pre-Cleaning
-    await notifyTab(tab.id, 'Step 1/4: LLM Pre-Cleaning...', 'loading');
+    await notifyTab(tab.id, 'LLM Pre-Cleaning...', 'loading');
     const preCleaningResult = await llmPreCleaning(rawContent, config);
 
     if (!preCleaningResult.success) {
@@ -47,15 +47,15 @@ async function handleSendToLLM() {
     }
 
     // Step 2: Post-LLM Cleanup
-    await notifyTab(tab.id, 'Step 2/4: Post-LLM Cleanup...', 'loading');
+    await notifyTab(tab.id, 'Post-LLM Cleanup...', 'loading');
     const cleanupResult = postLLMCleanup(preCleaningResult.data);
 
     // Step 3: Chunk Builder
-    await notifyTab(tab.id, 'Step 3/4: Building Chunks...', 'loading');
+    await notifyTab(tab.id, 'Building Chunks...', 'loading');
     const chunkResult = chunkBuilder(cleanupResult, preCleaningResult.data);
 
     // Step 4: Build Memory-Ready Data
-    await notifyTab(tab.id, 'Step 4/4: Finalizing...', 'loading');
+    await notifyTab(tab.id, 'Finalizing...', 'loading');
     const memoryReady = buildMemoryReadyData(
       chunkResult.chunks,
       rawContent,
@@ -200,7 +200,7 @@ async function handleAutoFillForm() {
       return;
     }
 
-    await notifyTab(tab.id, `Found ${formFields.length} fields. Generating answers...`, 'loading');
+    await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
 
     // Get LLM configuration
     const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
@@ -220,10 +220,17 @@ async function handleAutoFillForm() {
         answers: answers.data
       });
 
-      // Build success message with token usage
+      // Build success message with RAG stats and token usage
       let successMessage = 'Form filled successfully!';
+
+      // Add RAG retrieval info
+      if (answers.retrievalStats) {
+        successMessage += ` [RAG: Retrieved ${answers.retrievalStats.totalChunks} chunks, top relevance ${(answers.retrievalStats.topSimilarity * 100).toFixed(0)}%]`;
+      }
+
+      // Add token usage
       if (answers.tokenUsage) {
-        successMessage += ` (Used ${answers.tokenUsage.totalTokens.toLocaleString()} tokens: ${answers.tokenUsage.inputTokens.toLocaleString()} in, ${answers.tokenUsage.outputTokens.toLocaleString()} out)`;
+        successMessage += ` (${answers.tokenUsage.totalTokens.toLocaleString()} tokens)`;
       }
 
       await notifyTab(tab.id, successMessage, 'success');
@@ -255,50 +262,43 @@ async function notifyTab(tabId, message, status) {
   }
 }
 
-async function sendToLLM(pageContent, config) {
-  const { llmProvider, apiKey, apiEndpoint, modelName, systemPrompt } = config;
+/**
+ * Core function to build LLM request body based on provider
+ */
+function buildLLMRequestBody(provider, modelName, userPrompt, systemPrompt = null, options = {}) {
+  const { maxTokens = 1500, temperature = 0.7 } = options;
 
-  try {
-    const requestBody = buildLLMRequest(llmProvider, pageContent, modelName, systemPrompt);
-    const headers = buildLLMHeaders(llmProvider, apiKey);
-
-    const response = await fetch(apiEndpoint, {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify(requestBody)
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        success: false,
-        error: `API request failed (${response.status}): ${errorText}`
-      };
+  if (provider === 'openai' || provider === 'custom') {
+    const messages = [];
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
     }
-
-    const data = await response.json();
-    const content = extractLLMResponse(llmProvider, data);
-
-    // Extract and save token usage
-    const tokenUsage = extractTokenUsage(llmProvider, data);
-    if (tokenUsage) {
-      await updateTokenUsage(llmProvider, tokenUsage);
-    }
+    messages.push({ role: 'user', content: userPrompt });
 
     return {
-      success: true,
-      data: {
-        content: content,
-        raw: data,
-        tokenUsage: tokenUsage
-      }
+      model: modelName,
+      messages,
+      max_tokens: maxTokens,
+      temperature
     };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message
+  } else if (provider === 'anthropic') {
+    const body = {
+      model: modelName,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: userPrompt }]
     };
+    if (systemPrompt) {
+      body.system = systemPrompt;
+    }
+    return body;
   }
+
+  // Default fallback
+  return {
+    model: modelName,
+    messages: [{ role: 'user', content: userPrompt }],
+    max_tokens: maxTokens
+  };
 }
 
 function buildLLMRequest(provider, pageContent, modelName, systemPrompt) {
@@ -309,7 +309,7 @@ function buildLLMRequest(provider, pageContent, modelName, systemPrompt) {
   let contentToAnalyze = pageContent.markdown || pageContent.text;
 
   // Smart content filtering to extract valuable information
-  const MAX_CHARS = 12000;  // Reduced to avoid rate limits
+  const MAX_CHARS = 12000;
   const needsFiltering = contentToAnalyze.length > MAX_CHARS;
 
   if (needsFiltering) {
@@ -326,46 +326,10 @@ Original Word Count: ${pageContent.wordCount}${needsFiltering ? ' (filtered for 
 Page Content:
 ${contentToAnalyze}`;
 
-  if (provider === 'openai' || provider === 'custom') {
-    const messages = [];
-
-    if (systemPrompt) {
-      messages.push({
-        role: 'system',
-        content: systemPrompt
-      });
-    }
-
-    messages.push({
-      role: 'user',
-      content: userPrompt
-    });
-
-    return {
-      model: modelName,
-      messages: messages,
-      max_tokens: 1500,  // Reduced to avoid rate limits
-      temperature: 0.7
-    };
-  } else if (provider === 'anthropic') {
-    return {
-      model: modelName,
-      max_tokens: 1500,  // Reduced to avoid rate limits
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt
-        }
-      ],
-      ...(systemPrompt && { system: systemPrompt })
-    };
-  }
-
-  return {
-    model: modelName,
-    messages: [{ role: 'user', content: userPrompt }],
-    max_tokens: 1500  // Reduced to avoid rate limits
-  };
+  return buildLLMRequestBody(provider, modelName, userPrompt, systemPrompt, {
+    maxTokens: 1500,
+    temperature: 0.7
+  });
 }
 
 function filterImportantContent(content, maxChars) {
@@ -593,13 +557,70 @@ async function generateFormAnswers(formFields, savedContext, config) {
   const { llmProvider, apiKey, apiEndpoint, modelName } = config;
 
   try {
-    // Build prompt for form filling
+    // ==================== RAG: Retrieve Relevant Knowledge ====================
+    let retrievedContext = '';
+    let retrievalStats = null;
+
+    // Step 1: Build query from form fields
+    const queryText = formFields.map(field =>
+      `${field.label || ''} ${field.placeholder || ''}`
+    ).filter(text => text.trim()).join(' ');
+
+    console.log('[AutoFeel RAG] Query text:', queryText);
+
+    // Step 2: Generate embedding for query (only if OpenAI/custom provider)
+    if (queryText && (llmProvider === 'openai' || llmProvider === 'custom')) {
+      try {
+        const queryEmbedding = await generateEmbedding(queryText, config);
+
+        if (queryEmbedding) {
+          console.log('[AutoFeel RAG] Generated query embedding, dimensions:', queryEmbedding.length);
+
+          // Step 3: Semantic search in knowledge base
+          await memoryDB.init();
+          const searchResults = await memoryDB.semanticSearch(queryEmbedding, 5); // Top 5 results
+
+          if (searchResults && searchResults.length > 0) {
+            console.log(`[AutoFeel RAG] Found ${searchResults.length} relevant chunks`);
+
+            retrievalStats = {
+              totalChunks: searchResults.length,
+              avgSimilarity: (searchResults.reduce((sum, r) => sum + r.similarity, 0) / searchResults.length).toFixed(3),
+              topSimilarity: searchResults[0].similarity.toFixed(3)
+            };
+
+            // Step 4: Format retrieved chunks into context
+            retrievedContext = searchResults.map((chunk, index) => {
+              return `[Retrieved Knowledge ${index + 1}] (Relevance: ${(chunk.similarity * 100).toFixed(1)}%)
+Source: ${chunk.source.title}
+Content: ${chunk.text}`;
+            }).join('\n\n');
+
+            console.log('[AutoFeel RAG] Retrieval stats:', retrievalStats);
+          } else {
+            console.log('[AutoFeel RAG] No relevant chunks found in knowledge base');
+          }
+        } else {
+          console.log('[AutoFeel RAG] Failed to generate query embedding');
+        }
+      } catch (ragError) {
+        console.error('[AutoFeel RAG] Retrieval error:', ragError);
+        // Continue without RAG if retrieval fails
+      }
+    } else {
+      console.log('[AutoFeel RAG] Skipping RAG (no query or unsupported provider)');
+    }
+
+    // ==================== Build Enhanced Prompt with RAG ====================
     const systemPrompt = `You are an AI assistant that helps fill out forms based on provided information.
 You will receive:
-1. Information from a previous page (the user's background, resume, or other context)
-2. A list of form fields with their questions/labels
+1. Retrieved knowledge from the user's personal knowledge base (if available)
+2. Information from a previous page (the user's background, resume, or other context)
+3. A list of form fields with their questions/labels
 
-Your task is to generate appropriate answers for each form field based on the provided context.
+Your task is to generate appropriate answers for each form field based on ALL the provided context.
+**Prioritize information from the retrieved knowledge base when available**, as it represents the user's curated information.
+
 Respond ONLY with a JSON object where keys are field IDs and values are the answers.
 
 Example response format:
@@ -608,13 +629,28 @@ Example response format:
   "field_1": "answer for second field"
 }`;
 
-    const userPrompt = `Context from previous page:
+    // Build user prompt with RAG context
+    let userPrompt = '';
+
+    // Add retrieved knowledge first (highest priority)
+    if (retrievedContext) {
+      userPrompt += `=== RETRIEVED KNOWLEDGE FROM USER'S KNOWLEDGE BASE ===
+${retrievedContext}
+
+`;
+    }
+
+    // Add saved context from previous page
+    userPrompt += `=== CONTEXT FROM PREVIOUS PAGE ===
 ${savedContext.pageContent.text}
 
 Previous LLM Analysis:
 ${savedContext.llmAnalysis}
 
-Form fields to fill:
+`;
+
+    // Add form fields
+    userPrompt += `=== FORM FIELDS TO FILL ===
 ${formFields.map((field, index) =>
   `Field ${index} (ID: field_${index}):
   Label: ${field.label}
@@ -623,7 +659,9 @@ ${formFields.map((field, index) =>
   Current Value: ${field.value}
 `).join('\n')}
 
-Please generate appropriate answers for each field based on the context provided. Return ONLY a JSON object.`;
+Please generate appropriate answers for each field based on the context provided above.
+${retrievedContext ? '**Prioritize information from the retrieved knowledge base.**' : ''}
+Return ONLY a JSON object.`;
 
     const requestBody = buildFormFillingRequest(llmProvider, systemPrompt, userPrompt, modelName);
     const headers = buildLLMHeaders(llmProvider, apiKey);
@@ -670,7 +708,8 @@ Please generate appropriate answers for each field based on the context provided
     return {
       success: true,
       data: answers,
-      tokenUsage: tokenUsage
+      tokenUsage: tokenUsage,
+      retrievalStats: retrievalStats // Include RAG stats
     };
   } catch (error) {
     return {
@@ -681,35 +720,10 @@ Please generate appropriate answers for each field based on the context provided
 }
 
 function buildFormFillingRequest(provider, systemPrompt, userPrompt, modelName) {
-  if (provider === 'openai' || provider === 'custom') {
-    return {
-      model: modelName,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 2000,
-      temperature: 0.7
-    };
-  } else if (provider === 'anthropic') {
-    return {
-      model: modelName,
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt }
-      ]
-    };
-  }
-
-  return {
-    model: modelName,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    max_tokens: 2000
-  };
+  return buildLLMRequestBody(provider, modelName, userPrompt, systemPrompt, {
+    maxTokens: 2000,
+    temperature: 0.7
+  });
 }
 
 async function showResult(tabId, pageContent, llmResponse, config) {

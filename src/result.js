@@ -84,7 +84,7 @@ function displayOverview() {
   const topicsContainer = document.getElementById('main-topics');
   if (memoryReady.metadata.mainTopics && memoryReady.metadata.mainTopics.length > 0) {
     topicsContainer.innerHTML = memoryReady.metadata.mainTopics
-      .map(topic => `<span class="tag">${escapeHtml(topic)}</span>`)
+      .map(topic => `<span class="tag">${Utils.escapeHtml(topic)}</span>`)
       .join('');
   } else {
     topicsContainer.innerHTML = '<p class="no-data">No topics identified</p>';
@@ -94,7 +94,7 @@ function displayOverview() {
   const keyPointsList = document.getElementById('key-points');
   if (memoryReady.metadata.keyPoints && memoryReady.metadata.keyPoints.length > 0) {
     keyPointsList.innerHTML = memoryReady.metadata.keyPoints
-      .map(point => `<li>${escapeHtml(point)}</li>`)
+      .map(point => `<li>${Utils.escapeHtml(point)}</li>`)
       .join('');
   } else {
     keyPointsList.innerHTML = '<li class="no-data">No key points identified</li>';
@@ -109,9 +109,9 @@ function displayOverview() {
       if (items && items.length > 0) {
         html += `
           <div class="entity-group">
-            <h4>${capitalize(type)}</h4>
+            <h4>${Utils.capitalize(type)}</h4>
             <div class="tags-container">
-              ${items.map(item => `<span class="tag entity-tag">${escapeHtml(item)}</span>`).join('')}
+              ${items.map(item => `<span class="tag entity-tag">${Utils.escapeHtml(item)}</span>`).join('')}
             </div>
           </div>
         `;
@@ -188,13 +188,13 @@ function displayChunks() {
           <span class="chunk-position ${chunk.metadata.position}">${chunk.metadata.position}</span>
           <span class="chunk-importance ${importanceClass}">Importance: ${importancePercent}%</span>
         </div>
-        ${chunk.topic ? `<div class="chunk-topic"><strong>Topic:</strong> ${escapeHtml(chunk.topic)}</div>` : ''}
+        ${chunk.topic ? `<div class="chunk-topic"><strong>Topic:</strong> ${Utils.escapeHtml(chunk.topic)}</div>` : ''}
         <div class="chunk-tags">
-          ${chunk.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+          ${chunk.tags.map(tag => `<span class="tag">${Utils.escapeHtml(tag)}</span>`).join('')}
           ${chunk.metadata.keyEntities && chunk.metadata.keyEntities.length > 0 ?
-            chunk.metadata.keyEntities.map(entity => `<span class="tag entity-tag">${escapeHtml(entity)}</span>`).join('') : ''}
+            chunk.metadata.keyEntities.map(entity => `<span class="tag entity-tag">${Utils.escapeHtml(entity)}</span>`).join('') : ''}
         </div>
-        <div class="chunk-text">${escapeHtml(chunk.text)}</div>
+        <div class="chunk-text">${Utils.escapeHtml(chunk.text)}</div>
         <div class="chunk-meta">
           ${chunk.metadata.wordCount} words | ${chunk.metadata.sentenceCount} sentences
         </div>
@@ -285,84 +285,56 @@ function setupEventListeners() {
   // Export JSON
   document.getElementById('export-json').addEventListener('click', () => {
     if (!pipelineData) return;
-
-    const dataStr = JSON.stringify(pipelineData.memoryReady, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `autofeel-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    Utils.exportData(
+      JSON.stringify(pipelineData.memoryReady, null, 2),
+      `autofeel-${Date.now()}.json`,
+      'application/json'
+    );
   });
 
   // Export Text
   document.getElementById('export-text').addEventListener('click', () => {
     if (!pipelineData) return;
-
-    const blob = new Blob([pipelineData.memoryReady.cleanText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `autofeel-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    Utils.exportData(
+      pipelineData.memoryReady.cleanText,
+      `autofeel-${Date.now()}.txt`,
+      'text/plain'
+    );
   });
 
   // Export Document Schema
   document.getElementById('export-doc-schema').addEventListener('click', () => {
     if (!pipelineData || !pipelineData.documentSchema) return;
-
-    const dataStr = JSON.stringify(pipelineData.documentSchema, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `document-schema-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    Utils.exportData(
+      JSON.stringify(pipelineData.documentSchema, null, 2),
+      `document-schema-${Date.now()}.json`,
+      'application/json'
+    );
   });
 
   // Export Chunk Schemas
   document.getElementById('export-chunk-schemas').addEventListener('click', () => {
     if (!pipelineData || !pipelineData.chunkSchemas) return;
-
-    const dataStr = JSON.stringify(pipelineData.chunkSchemas, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `chunk-schemas-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    Utils.exportData(
+      JSON.stringify(pipelineData.chunkSchemas, null, 2),
+      `chunk-schemas-${Date.now()}.json`,
+      'application/json'
+    );
   });
 
   // Export All Schemas
   document.getElementById('export-all-schemas').addEventListener('click', () => {
     if (!pipelineData || !pipelineData.documentSchema || !pipelineData.chunkSchemas) return;
-
     const allSchemas = {
       documentSchema: pipelineData.documentSchema,
       chunkSchemas: pipelineData.chunkSchemas
     };
-    const dataStr = JSON.stringify(allSchemas, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `all-schemas-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    Utils.exportData(
+      JSON.stringify(allSchemas, null, 2),
+      `all-schemas-${Date.now()}.json`,
+      'application/json'
+    );
   });
 }
 
-// Helper functions
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
+// Helper functions (now using Utils module)

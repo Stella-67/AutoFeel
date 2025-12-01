@@ -320,7 +320,7 @@ function displayFuzzyResults(documents) {
 
   const html = documents.map(doc => `
     <div class="result-item">
-      <div class="result-title">${escapeHtml(doc.title)}</div>
+      <div class="result-title">${Utils.escapeHtml(doc.title)}</div>
       <div class="result-url"><a href="${doc.url}" target="_blank">${doc.url}</a></div>
       <div class="result-meta">
         ${new Date(doc.captured_at).toLocaleDateString()} |
@@ -387,9 +387,9 @@ function displaySemanticResults(chunks) {
   const html = chunks.map(chunk => `
     <div class="result-item">
       <div class="result-similarity">Similarity: ${(chunk.similarity * 100).toFixed(1)}%</div>
-      <div class="result-text">${escapeHtml(chunk.text.substring(0, 200))}...</div>
+      <div class="result-text">${Utils.escapeHtml(chunk.text.substring(0, 200))}...</div>
       <div class="result-meta">
-        From: <strong>${escapeHtml(chunk.source.title)}</strong> |
+        From: <strong>${Utils.escapeHtml(chunk.source.title)}</strong> |
         ${chunk.metadata.word_count} words |
         Importance: ${(chunk.importance * 100).toFixed(0)}%
       </div>
@@ -508,12 +508,6 @@ async function clearAllMemory() {
     console.error('[AutoFeel] Failed to clear memory:', error);
     showStatus(`Failed to clear memory: ${error.message}`, 'error');
   }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 // Add event listeners for memory search
