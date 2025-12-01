@@ -3,183 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Application Form Auto-Fill</title>
+  <title>AutoFeel Settings</title>
   <link rel="stylesheet" href="styles/popup.css">
 </head>
 <body>
   <div class="container">
-    <!-- Header -->
-    <div class="header">
-      <h1>📋 Form Auto-Fill</h1>
-      <div class="header-actions">
-        <button id="settingsBtn" class="icon-btn" title="Settings">
-          ⚙️
-        </button>
-      </div>
+    <h1>AutoFeel Settings</h1>
+
+    <div class="section">
+      <label for="llm-provider">LLM Provider:</label>
+      <select id="llm-provider">
+        <option value="">-- Please Select --</option>
+        <option value="openai">OpenAI (GPT)</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="custom">Custom API</option>
+      </select>
     </div>
 
-    <!-- Main Content -->
-    <div class="content" id="mainContent">
-      <!-- Tab Navigation -->
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="profile">My Profile</button>
-        <button class="tab-btn" data-tab="settings">Settings</button>
-      </div>
-
-      <!-- Profile Tab -->
-      <div class="tab-content active" id="profile-tab">
-        <div class="section">
-          <h2>Personal Information</h2>
-          <form id="personalForm" class="form">
-            <div class="form-group">
-              <label>Full Name</label>
-              <input type="text" id="fullName" placeholder="Your full name">
-            </div>
-            <div class="form-group">
-              <label>Email</label>
-              <input type="email" id="email" placeholder="your.email@example.com">
-            </div>
-            <div class="form-group">
-              <label>Phone</label>
-              <input type="tel" id="phone" placeholder="+1 (555) 000-0000">
-            </div>
-            <div class="form-group">
-              <label>Location</label>
-              <input type="text" id="location" placeholder="City, Country">
-            </div>
-            <div class="form-group">
-              <label>Professional Summary</label>
-              <textarea id="summary" placeholder="Brief summary about yourself (2-3 sentences)"></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary">Save Personal Info</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Education</h2>
-          <button id="addEducationBtn" class="btn btn-secondary">Add Education</button>
-          <div id="educationList" class="item-list"></div>
-        </div>
-
-        <div class="section">
-          <h2>Experience</h2>
-          <button id="addExperienceBtn" class="btn btn-secondary">Add Experience</button>
-          <div id="experienceList" class="item-list"></div>
-        </div>
-
-        <div class="section">
-          <h2>Research</h2>
-          <button id="addResearchBtn" class="btn btn-secondary">Add Research</button>
-          <div id="researchList" class="item-list"></div>
-        </div>
-
-        <div class="section">
-          <h2>Other</h2>
-          <p class="section-description">Add any other relevant information (awards, certifications, projects, etc.)</p>
-          <button id="addOtherBtn" class="btn btn-secondary">Add Item</button>
-          <div id="otherList" class="item-list"></div>
-        </div>
-
-        <div class="section">
-          <h2>Documents & Writing Samples</h2>
-          <p class="section-description">Upload your SOP, essays, or other writing samples. The AI will reference these when filling forms.</p>
-          <button id="addDocumentBtn" class="btn btn-secondary">Upload Document</button>
-          <div id="documentsList" class="item-list"></div>
-        </div>
-      </div>
-
-      <!-- Settings Tab -->
-      <div class="tab-content" id="settings-tab">
-        <div class="section">
-          <h2>LLM Configuration</h2>
-          <form id="llmForm" class="form">
-            <div class="form-group">
-              <label>LLM Provider</label>
-              <select id="llmProvider">
-                <option value="openai">OpenAI (GPT-4)</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>API Key</label>
-              <input type="password" id="apiKey" placeholder="Paste your API key here">
-              <small>Your API key is stored locally and never sent to external servers.</small>
-            </div>
-            <div class="form-group">
-              <label>Model</label>
-              <input type="text" id="model" placeholder="e.g., gpt-4, claude-3-sonnet">
-            </div>
-            <button type="submit" class="btn btn-primary">Save LLM Settings</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Auto-Fill Preferences</h2>
-          <form id="autoFillForm" class="form">
-            <div class="form-group checkbox">
-              <input type="checkbox" id="requireApproval">
-              <label>Require approval before filling fields</label>
-            </div>
-            <div class="form-group checkbox">
-              <input type="checkbox" id="avoidRepetition">
-              <label>Avoid repeating the same stories</label>
-            </div>
-            <div class="form-group">
-              <label>Days between story reuse</label>
-              <input type="number" id="minDaysBetweenStories" min="1" value="7">
-            </div>
-            <button type="submit" class="btn btn-primary">Save Auto-Fill Settings</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Answer Style</h2>
-          <form id="styleForm" class="form">
-            <div class="form-group">
-              <label>Tone</label>
-              <select id="tone">
-                <option value="professional">Professional</option>
-                <option value="conversational">Conversational</option>
-                <option value="formal">Formal</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Length</label>
-              <select id="length">
-                <option value="brief">Brief (1-2 sentences)</option>
-                <option value="medium">Medium (2-3 sentences)</option>
-                <option value="detailed">Detailed (3-4 sentences)</option>
-              </select>
-            </div>
-            <div class="form-group checkbox">
-              <input type="checkbox" id="includeMetrics">
-              <label>Include metrics and quantifiable results</label>
-            </div>
-            <button type="submit" class="btn btn-primary">Save Style Settings</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Data Management</h2>
-          <div class="button-group">
-            <button id="exportBtn" class="btn btn-secondary">Export Data</button>
-            <button id="importBtn" class="btn btn-secondary">Import Data</button>
-            <button id="clearBtn" class="btn btn-danger">Clear All Data</button>
-          </div>
-        </div>
-      </div>
+    <div class="section" id="api-key-section" style="display: none;">
+      <label for="api-key">API Key:</label>
+      <input type="password" id="api-key" placeholder="Enter your API Key">
+      <button id="toggle-key" class="btn-small">Show</button>
     </div>
 
-    <!-- Toast Notification -->
-    <div id="toast" class="toast"></div>
-  </div>
+    <div class="section" id="custom-endpoint-section" style="display: none;">
+      <label for="api-endpoint">API Endpoint:</label>
+      <input type="text" id="api-endpoint" placeholder="https://api.example.com/v1/chat/completions">
+    </div>
 
-  <!-- Modal for editing items -->
-  <div id="modal" class="modal">
-    <div class="modal-content">
-      <span class="close">&times;</span>
-      <h2 id="modalTitle">Edit Item</h2>
-      <form id="modalForm" class="form"></form>
+    <div class="section" id="model-section" style="display: none;">
+      <label for="model-name">Model Name:</label>
+      <input type="text" id="model-name" placeholder="e.g. gpt-4, claude-3-sonnet">
+    </div>
+
+    <div class="section" id="prompt-section" style="display: none;">
+      <label for="system-prompt">System Prompt (Optional):</label>
+      <textarea id="system-prompt" rows="3" placeholder="Set a default system prompt..."></textarea>
+    </div>
+
+    <div class="button-group">
+      <button id="test-btn" class="btn-secondary" disabled>Test Connection</button>
+      <button id="save-btn" class="btn-primary" disabled>Save Settings</button>
+    </div>
+
+    <div id="status-message" class="status-message"></div>
+
+    <div class="usage-info">
+      <h3>Usage Instructions</h3>
+      <p>1. Select LLM provider and enter API Key</p>
+      <p>2. Click "Test Connection" to verify API</p>
+      <p>3. Click "Save Settings" to save configuration</p>
+      <p>4. Press <kbd>Option+C</kbd> (Mac) or <kbd>Alt+C</kbd> (Windows) on any webpage to send content to LLM</p>
     </div>
   </div>
 

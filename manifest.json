@@ -1,30 +1,47 @@
 {
   "manifest_version": 3,
-  "name": "Application Form Auto-Fill",
-  "version": "0.1.0",
-  "description": "Automatically fill application forms with your stored profile and AI-generated answers",
+  "name": "AutoFeel - AI Page Assistant",
+  "version": "0.2.0",
+  "description": "Send page content to LLM for analysis using Option+C hotkey",
   "permissions": [
-    "storage",
-    "tabs",
     "activeTab",
-    "scripting",
-    "webRequest"
+    "storage",
+    "scripting"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://*/*",
+    "http://*/*"
   ],
   "background": {
-    "service_worker": "dist/background.js",
-    "type": "module"
+    "service_worker": "src/background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["dist/contentScript.js"],
-      "run_at": "document_end"
+      "js": ["src/contentScript.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "send-to-llm": {
+      "suggested_key": {
+        "default": "Alt+C",
+        "mac": "Alt+C"
+      },
+      "description": "Send page content to LLM"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   }
 }

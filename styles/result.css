@@ -1,0 +1,262 @@
+/* result.css - 结果页面样式 */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  font-size: 14px;
+  color: #333;
+  background-color: #f5f5f5;
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background-color: #fff;
+  min-height: 100vh;
+}
+
+header {
+  background-color: #2196F3;
+  color: white;
+  padding: 24px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+header h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.content {
+  padding: 32px;
+}
+
+.section {
+  margin-bottom: 32px;
+  background-color: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.section h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #1a1a1a;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.info-item {
+  display: flex;
+  gap: 8px;
+}
+
+.label {
+  font-weight: 600;
+  color: #666;
+  white-space: nowrap;
+}
+
+.value {
+  color: #333;
+  word-break: break-word;
+}
+
+.link {
+  color: #2196F3;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.response-box {
+  background-color: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.response-box h1,
+.response-box h2,
+.response-box h3 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  color: #1a1a1a;
+}
+
+.response-box h1 {
+  font-size: 22px;
+}
+
+.response-box h2 {
+  font-size: 18px;
+}
+
+.response-box h3 {
+  font-size: 16px;
+}
+
+.response-box p {
+  margin-bottom: 12px;
+}
+
+.response-box ul {
+  margin-left: 24px;
+  margin-bottom: 12px;
+}
+
+.response-box li {
+  margin-bottom: 6px;
+}
+
+.response-box code {
+  background-color: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+  font-size: 13px;
+}
+
+.response-box pre {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.response-box pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.response-box strong {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.response-box em {
+  font-style: italic;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  color: #2196F3;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-btn:hover {
+  color: #1976D2;
+}
+
+.toggle-icon {
+  font-size: 12px;
+  transition: transform 0.2s;
+}
+
+.content-box {
+  background-color: #f9f9f9;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-top: 12px;
+  line-height: 1.7;
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  color: #555;
+}
+
+.content-box.collapsed {
+  display: none;
+}
+
+button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: white;
+  color: #2196F3;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+.btn-secondary {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 滚动条样式 */
+.content-box::-webkit-scrollbar {
+  width: 8px;
+}
+
+.content-box::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.content-box::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+.content-box::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}

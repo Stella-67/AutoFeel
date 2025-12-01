@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoFeel - LLM Response</title>
+  <link rel="stylesheet" href="styles/result.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AutoFeel - LLM Analysis Result</h1>
+      <div class="header-actions">
+        <button id="copy-btn" class="btn-secondary">Copy Response</button>
+        <button id="close-btn" class="btn-primary">Close</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="section">
+        <h2>Page Information</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="label">Title:</span>
+            <span id="page-title" class="value"></span>
+          </div>
+          <div class="info-item">
+            <span class="label">URL:</span>
+            <a id="page-url" class="value link" target="_blank"></a>
+          </div>
+          <div class="info-item">
+            <span class="label">Word Count:</span>
+            <span id="word-count" class="value"></span>
+          </div>
+          <div class="info-item">
+            <span class="label">Analysis Time:</span>
+            <span id="timestamp" class="value"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>LLM Analysis Result</h2>
+        <div id="llm-response" class="response-box"></div>
+      </section>
+
+      <section class="section">
+        <h2>
+          <button id="toggle-content" class="toggle-btn">
+            <span class="toggle-icon">▶</span>
+            Original Page Content
+          </button>
+        </h2>
+        <div id="original-content" class="content-box collapsed"></div>
+      </section>
+    </div>
+  </div>
+
+  <script src="src/result.js"></script>
+</body>
+</html>
