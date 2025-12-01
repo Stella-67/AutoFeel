@@ -37,6 +37,13 @@
         "mac": "Alt+C"
       },
       "description": "Send page content to LLM"
+    },
+    "auto-fill-form": {
+      "suggested_key": {
+        "default": "Alt+V",
+        "mac": "Alt+V"
+      },
+      "description": "Auto-fill form with LLM"
     }
   },
   "icons": {

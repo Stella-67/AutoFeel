@@ -1,6 +1,8 @@
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'send-to-llm') {
     await handleSendToLLM();
+  } else if (command === 'auto-fill-form') {
+    await handleAutoFillForm();
   }
 });
 
@@ -35,8 +37,18 @@ async function handleSendToLLM() {
     const llmResponse = await sendToLLM(pageContent, config);
 
     if (llmResponse.success) {
+      // Save the page content and LLM response for auto-fill
+      await chrome.storage.local.set({
+        savedContext: {
+          pageContent: pageContent,
+          llmAnalysis: llmResponse.data.content,
+          timestamp: new Date().toISOString(),
+          sourceUrl: pageContent.metadata.url
+        }
+      });
+
       await showResult(tab.id, pageContent, llmResponse.data, config);
-      await notifyTab(tab.id, 'LLM response received!', 'success');
+      await notifyTab(tab.id, 'LLM response received! Press Alt+V on a form to auto-fill.', 'success');
     } else {
       await notifyTab(tab.id, `LLM request failed: ${llmResponse.error}`, 'error');
     }
@@ -46,6 +58,77 @@ async function handleSendToLLM() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab) {
         await notifyTab(tab.id, `Processing error: ${error.message}`, 'error');
+      }
+    } catch (e) {
+      console.error('Failed to show error notification:', e);
+    }
+  }
+}
+
+async function handleAutoFillForm() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab) {
+      console.error('No active tab found');
+      return;
+    }
+
+    await notifyTab(tab.id, 'Detecting form fields...', 'loading');
+
+    // Get saved context from previous LLM analysis
+    const { savedContext } = await chrome.storage.local.get(['savedContext']);
+
+    if (!savedContext) {
+      await notifyTab(tab.id, 'No saved context found. Please use Alt+C first to analyze a page.', 'error');
+      return;
+    }
+
+    // Get form fields from the current page
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORM_FIELDS' });
+
+    if (!response || !response.success) {
+      await notifyTab(tab.id, 'Failed to detect form fields', 'error');
+      return;
+    }
+
+    const formFields = response.fields;
+
+    if (formFields.length === 0) {
+      await notifyTab(tab.id, 'No form fields found on this page', 'error');
+      return;
+    }
+
+    await notifyTab(tab.id, `Found ${formFields.length} fields. Generating answers...`, 'loading');
+
+    // Get LLM configuration
+    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
+
+    if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
+      await notifyTab(tab.id, 'Please configure LLM API in extension settings', 'error');
+      return;
+    }
+
+    // Generate answers for form fields
+    const answers = await generateFormAnswers(formFields, savedContext, config);
+
+    if (answers.success) {
+      // Send answers back to content script to fill the form
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'FILL_FORM',
+        answers: answers.data
+      });
+
+      await notifyTab(tab.id, 'Form filled successfully!', 'success');
+    } else {
+      await notifyTab(tab.id, `Failed to generate answers: ${answers.error}`, 'error');
+    }
+  } catch (error) {
+    console.error('Error in handleAutoFillForm:', error);
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) {
+        await notifyTab(tab.id, `Error: ${error.message}`, 'error');
       }
     } catch (e) {
       console.error('Failed to show error notification:', e);
@@ -317,6 +400,122 @@ function extractLLMResponse(provider, data) {
   }
 
   return 'Unable to parse response content';
+}
+
+async function generateFormAnswers(formFields, savedContext, config) {
+  const { llmProvider, apiKey, apiEndpoint, modelName } = config;
+
+  try {
+    // Build prompt for form filling
+    const systemPrompt = `You are an AI assistant that helps fill out forms based on provided information.
+You will receive:
+1. Information from a previous page (the user's background, resume, or other context)
+2. A list of form fields with their questions/labels
+
+Your task is to generate appropriate answers for each form field based on the provided context.
+Respond ONLY with a JSON object where keys are field IDs and values are the answers.
+
+Example response format:
+{
+  "field_0": "answer for first field",
+  "field_1": "answer for second field"
+}`;
+
+    const userPrompt = `Context from previous page:
+${savedContext.pageContent.text}
+
+Previous LLM Analysis:
+${savedContext.llmAnalysis}
+
+Form fields to fill:
+${formFields.map((field, index) =>
+  `Field ${index} (ID: field_${index}):
+  Label: ${field.label}
+  Placeholder: ${field.placeholder}
+  Type: ${field.type}
+  Current Value: ${field.value}
+`).join('\n')}
+
+Please generate appropriate answers for each field based on the context provided. Return ONLY a JSON object.`;
+
+    const requestBody = buildFormFillingRequest(llmProvider, systemPrompt, userPrompt, modelName);
+    const headers = buildLLMHeaders(llmProvider, apiKey);
+
+    const response = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        success: false,
+        error: `API request failed (${response.status}): ${errorText}`
+      };
+    }
+
+    const data = await response.json();
+    const content = extractLLMResponse(llmProvider, data);
+
+    // Parse JSON response
+    console.log('[AutoFeel] LLM raw response:', content);
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[AutoFeel] No JSON found in LLM response');
+      return {
+        success: false,
+        error: 'LLM did not return valid JSON'
+      };
+    }
+
+    const answers = JSON.parse(jsonMatch[0]);
+    console.log('[AutoFeel] Parsed answers:', JSON.stringify(answers, null, 2));
+    console.log(`[AutoFeel] Number of answers: ${Object.keys(answers).length}`);
+
+    return {
+      success: true,
+      data: answers
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+function buildFormFillingRequest(provider, systemPrompt, userPrompt, modelName) {
+  if (provider === 'openai' || provider === 'custom') {
+    return {
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      max_tokens: 2000,
+      temperature: 0.7
+    };
+  } else if (provider === 'anthropic') {
+    return {
+      model: modelName,
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userPrompt }
+      ]
+    };
+  }
+
+  return {
+    model: modelName,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ],
+    max_tokens: 2000
+  };
 }
 
 async function showResult(tabId, pageContent, llmResponse, config) {

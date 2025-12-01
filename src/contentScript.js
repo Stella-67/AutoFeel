@@ -505,6 +505,124 @@ function htmlToMarkdown(element) {
   return markdown.trim();
 }
 
+function detectFormFields() {
+  const fields = [];
+
+  // Find all text-based input fields
+  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea');
+
+  console.log(`[AutoFeel] Found ${inputs.length} total input elements`);
+
+  let validFieldIndex = 0; // Counter for valid (non-hidden) fields
+
+  inputs.forEach((input, index) => {
+    // Skip hidden or disabled fields
+    if (input.offsetParent === null || input.disabled || input.readOnly) {
+      console.log(`[AutoFeel] Skipping field ${index}: hidden/disabled/readonly`);
+      return;
+    }
+
+    // Try to find the label for this input
+    let label = '';
+    let placeholder = input.placeholder || '';
+
+    // Method 1: Find associated label element
+    if (input.id) {
+      const labelElement = document.querySelector(`label[for="${input.id}"]`);
+      if (labelElement) {
+        label = labelElement.textContent.trim();
+      }
+    }
+
+    // Method 2: Find parent label
+    if (!label) {
+      const parentLabel = input.closest('label');
+      if (parentLabel) {
+        label = parentLabel.textContent.trim();
+      }
+    }
+
+    // Method 3: Look for nearby text
+    if (!label) {
+      // Check previous sibling
+      let prev = input.previousElementSibling;
+      if (prev && prev.tagName.match(/^(LABEL|DIV|SPAN|P)$/)) {
+        label = prev.textContent.trim();
+      }
+    }
+
+    // Method 4: Use aria-label
+    if (!label && input.getAttribute('aria-label')) {
+      label = input.getAttribute('aria-label');
+    }
+
+    // Method 5: Use name attribute
+    if (!label && input.name) {
+      label = input.name.replace(/[_-]/g, ' ').trim();
+    }
+
+    // Use sequential numbering for valid fields only
+    const fieldId = `field_${validFieldIndex}`;
+    input.dataset.autofeelId = fieldId;
+
+    const fieldInfo = {
+      id: fieldId,
+      label: label,
+      placeholder: placeholder,
+      type: input.type || 'text',
+      value: input.value,
+      name: input.name
+    };
+
+    fields.push(fieldInfo);
+    console.log(`[AutoFeel] Field ${validFieldIndex} (original index ${index}):`, fieldInfo);
+
+    validFieldIndex++; // Increment only for valid fields
+  });
+
+  console.log(`[AutoFeel] Detected ${fields.length} form fields total`);
+  console.log('[AutoFeel] All fields:', JSON.stringify(fields, null, 2));
+  return fields;
+}
+
+function fillFormFields(answers) {
+  console.log('[AutoFeel] Filling form fields with answers:', JSON.stringify(answers, null, 2));
+  console.log(`[AutoFeel] Number of answers received: ${Object.keys(answers).length}`);
+
+  let filledCount = 0;
+  let notFoundCount = 0;
+
+  Object.keys(answers).forEach(fieldId => {
+    const input = document.querySelector(`[data-autofeel-id="${fieldId}"]`);
+
+    if (input) {
+      const answer = answers[fieldId];
+
+      // Set the value
+      input.value = answer;
+
+      // Trigger events to ensure the page recognizes the change
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.dispatchEvent(new Event('blur', { bubbles: true }));
+
+      // Highlight the filled field
+      input.style.backgroundColor = '#e7f3ff';
+      setTimeout(() => {
+        input.style.backgroundColor = '';
+      }, 2000);
+
+      console.log(`[AutoFeel] ✓ Filled field ${fieldId} with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
+      filledCount++;
+    } else {
+      console.warn(`[AutoFeel] ✗ Field ${fieldId} not found in DOM`);
+      notFoundCount++;
+    }
+  });
+
+  console.log(`[AutoFeel] Summary: ${filledCount} fields filled, ${notFoundCount} fields not found`);
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'GET_PAGE_CONTENT') {
     // Handle async getPageContent
@@ -521,6 +639,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'SHOW_NOTIFICATION') {
     showNotification(request.message, request.status);
     sendResponse({ success: true });
+    return true;
+  }
+
+  if (request.type === 'DETECT_FORM_FIELDS') {
+    try {
+      const fields = detectFormFields();
+      sendResponse({ success: true, fields: fields });
+    } catch (error) {
+      sendResponse({ success: false, error: error.message });
+    }
+    return true;
+  }
+
+  if (request.type === 'FILL_FORM') {
+    try {
+      fillFormFields(request.answers);
+      sendResponse({ success: true });
+    } catch (error) {
+      sendResponse({ success: false, error: error.message });
+    }
     return true;
   }
 });
