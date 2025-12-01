@@ -3,56 +3,227 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoFeel - LLM Response</title>
+  <title>AutoFeel - Text Processing Pipeline</title>
   <link rel="stylesheet" href="styles/result.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>AutoFeel - LLM Analysis Result</h1>
+      <h1>AutoFeel - Text Processing Pipeline</h1>
       <div class="header-actions">
-        <button id="copy-btn" class="btn-secondary">Copy Response</button>
+        <button id="copy-btn" class="btn-secondary">Copy Final Text</button>
         <button id="close-btn" class="btn-primary">Close</button>
       </div>
     </header>
 
-    <div class="content">
-      <section class="section">
-        <h2>Page Information</h2>
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="label">Title:</span>
-            <span id="page-title" class="value"></span>
-          </div>
-          <div class="info-item">
-            <span class="label">URL:</span>
-            <a id="page-url" class="value link" target="_blank"></a>
-          </div>
-          <div class="info-item">
-            <span class="label">Word Count:</span>
-            <span id="word-count" class="value"></span>
-          </div>
-          <div class="info-item">
-            <span class="label">Analysis Time:</span>
-            <span id="timestamp" class="value"></span>
-          </div>
-        </div>
-      </section>
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+      <button class="tab-button active" data-tab="overview">Overview</button>
+      <button class="tab-button" data-tab="raw">Raw Content</button>
+      <button class="tab-button" data-tab="precleaning">Pre-Cleaning</button>
+      <button class="tab-button" data-tab="cleanup">Post-Cleanup</button>
+      <button class="tab-button" data-tab="chunks">Chunks</button>
+      <button class="tab-button" data-tab="memory">Memory-Ready</button>
+      <button class="tab-button" data-tab="schemas">Schemas</button>
+    </nav>
 
-      <section class="section">
-        <h2>LLM Analysis Result</h2>
-        <div id="llm-response" class="response-box"></div>
-      </section>
+    <!-- Tab Content -->
+    <div class="tab-content">
+      <!-- Overview Tab -->
+      <div class="tab-pane active" id="tab-overview">
+        <section class="section">
+          <h2>Page Information</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Source:</span>
+              <span id="source" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Title:</span>
+              <span id="page-title" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">URL:</span>
+              <a id="page-url" class="value link" target="_blank"></a>
+            </div>
+            <div class="info-item">
+              <span class="label">Processed At:</span>
+              <span id="timestamp" class="value"></span>
+            </div>
+          </div>
+        </section>
 
-      <section class="section">
-        <h2>
-          <button id="toggle-content" class="toggle-btn">
-            <span class="toggle-icon">▶</span>
-            Original Page Content
-          </button>
-        </h2>
-        <div id="original-content" class="content-box collapsed"></div>
-      </section>
+        <section class="section">
+          <h2>Processing Summary</h2>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value" id="raw-words">0</div>
+              <div class="stat-label">Raw Words</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="total-sentences">0</div>
+              <div class="stat-label">Sentences</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="total-chunks">0</div>
+              <div class="stat-label">Chunks</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="total-tokens">0</div>
+              <div class="stat-label">Tokens Used</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Main Topics</h2>
+          <div id="main-topics" class="tags-container"></div>
+        </section>
+
+        <section class="section">
+          <h2>Key Points</h2>
+          <ul id="key-points" class="key-points-list"></ul>
+        </section>
+
+        <section class="section">
+          <h2>Extracted Entities</h2>
+          <div id="entities" class="entities-container"></div>
+        </section>
+      </div>
+
+      <!-- Raw Content Tab -->
+      <div class="tab-pane" id="tab-raw">
+        <section class="section">
+          <h2>Raw Content</h2>
+          <div class="content-box" id="raw-content"></div>
+        </section>
+      </div>
+
+      <!-- Pre-Cleaning Tab -->
+      <div class="tab-pane" id="tab-precleaning">
+        <section class="section">
+          <h2>LLM Pre-Cleaning Result</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Tokens Used:</span>
+              <span id="precleaning-tokens" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Timestamp:</span>
+              <span id="precleaning-timestamp" class="value"></span>
+            </div>
+          </div>
+          <div class="content-box" id="precleaning-content"></div>
+        </section>
+      </div>
+
+      <!-- Post-Cleanup Tab -->
+      <div class="tab-pane" id="tab-cleanup">
+        <section class="section">
+          <h2>Post-LLM Cleanup Result</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Sentences:</span>
+              <span id="cleanup-sentences" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Applied Rules:</span>
+              <span id="cleanup-rules" class="value"></span>
+            </div>
+          </div>
+          <div class="content-box" id="cleanup-content"></div>
+        </section>
+      </div>
+
+      <!-- Chunks Tab -->
+      <div class="tab-pane" id="tab-chunks">
+        <section class="section">
+          <h2>Semantic Chunks</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Chunking Method:</span>
+              <span id="chunking-method" class="value"></span>
+            </div>
+          </div>
+          <div id="chunks-container" class="chunks-container"></div>
+        </section>
+      </div>
+
+      <!-- Memory-Ready Tab -->
+      <div class="tab-pane" id="tab-memory">
+        <section class="section">
+          <h2>Memory-Ready Data</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Total Chunks:</span>
+              <span id="memory-chunks" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Total Words:</span>
+              <span id="memory-words" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Total Sentences:</span>
+              <span id="memory-sentences" class="value"></span>
+            </div>
+          </div>
+          <div class="content-box" id="memory-content"></div>
+        </section>
+
+        <section class="section">
+          <h2>Export Options</h2>
+          <div class="button-group">
+            <button id="export-json" class="btn-secondary">Export as JSON</button>
+            <button id="export-text" class="btn-secondary">Export as Text</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- Schemas Tab -->
+      <div class="tab-pane" id="tab-schemas">
+        <section class="section">
+          <h2>Document Schema</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Document ID:</span>
+              <span id="schema-doc-id" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Source Type:</span>
+              <span id="schema-source-type" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Language:</span>
+              <span id="schema-language" class="value"></span>
+            </div>
+            <div class="info-item">
+              <span class="label">Captured At:</span>
+              <span id="schema-captured-at" class="value"></span>
+            </div>
+          </div>
+          <h4 style="margin-top: 20px; margin-bottom: 12px;">Full Document Schema (JSON)</h4>
+          <pre class="content-box" id="document-schema-json"></pre>
+          <div class="button-group" style="margin-top: 16px;">
+            <button id="export-doc-schema" class="btn-secondary">Export Document Schema</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>Chunk Schemas</h2>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="label">Total Chunks:</span>
+              <span id="schema-total-chunks" class="value"></span>
+            </div>
+          </div>
+          <h4 style="margin-top: 20px; margin-bottom: 12px;">All Chunk Schemas (JSON)</h4>
+          <pre class="content-box" id="chunk-schemas-json"></pre>
+          <div class="button-group" style="margin-top: 16px;">
+            <button id="export-chunk-schemas" class="btn-secondary">Export Chunk Schemas</button>
+            <button id="export-all-schemas" class="btn-secondary">Export All Schemas</button>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 

@@ -258,6 +258,31 @@ function getPageMetadata() {
 }
 
 async function getPageContent() {
+  // Check if user has selected text
+  const selection = window.getSelection();
+  const selectedText = selection.toString().trim();
+
+  if (selectedText && selectedText.length > 0) {
+    // User has selected text, use that instead
+    console.log('[AutoFeel] Using user selection:', selectedText.length, 'characters');
+
+    const metadata = getPageMetadata();
+    metadata.source = 'selection';
+    metadata.selectionLength = selectedText.length;
+
+    return {
+      text: selectedText,
+      html: '',
+      markdown: selectedText,
+      metadata: metadata,
+      wordCount: selectedText.split(/\s+/).length,
+      source: 'selection'
+    };
+  }
+
+  // No selection, get full page content
+  console.log('[AutoFeel] No selection, getting full page content');
+
   // Wait for Google Docs content to load if on Google Docs
   const hostname = window.location.hostname;
   if (hostname.includes('docs.google.com')) {
@@ -270,13 +295,15 @@ async function getPageContent() {
   const visibleText = getVisibleText();
   const structuredContent = getStructuredContent();
   const metadata = getPageMetadata();
+  metadata.source = 'full_page';
 
   return {
     text: visibleText,
     html: structuredContent.html,
     markdown: structuredContent.markdown,
     metadata: metadata,
-    wordCount: visibleText.split(/\s+/).length
+    wordCount: visibleText.split(/\s+/).length,
+    source: 'full_page'
   };
 }
 

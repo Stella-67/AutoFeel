@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoFeel Knowledge Manager</title>
+  <link rel="stylesheet" href="styles/manager.css">
+</head>
+<body>
+  <div class="manager-container">
+    <!-- Header -->
+    <header class="manager-header">
+      <div class="header-left">
+        <h1>📚 Knowledge Manager</h1>
+      </div>
+      <div class="header-center">
+        <div class="search-bar">
+          <input type="text" id="global-search" placeholder="Search documents, chunks, tags...">
+          <button id="search-btn" class="btn-icon">🔍</button>
+        </div>
+      </div>
+      <div class="header-right">
+        <button id="new-doc-btn" class="btn-primary">+ New</button>
+        <button id="sync-btn" class="btn-secondary">Sync</button>
+        <button id="settings-btn" class="btn-icon">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Main Content: 3-Column Layout -->
+    <div class="manager-main">
+      <!-- Left Column: Document List -->
+      <aside class="left-panel">
+        <div class="panel-header">
+          <h2>Documents</h2>
+          <div class="panel-controls">
+            <select id="sort-by">
+              <option value="created_at">Latest</option>
+              <option value="title">Title</option>
+              <option value="word_count">Size</option>
+            </select>
+            <button id="filter-btn" class="btn-icon">⚡</button>
+          </div>
+        </div>
+
+        <div class="panel-stats">
+          <span id="doc-count">0 documents</span>
+          <span id="total-chunks">0 chunks</span>
+        </div>
+
+        <div class="document-list" id="document-list">
+          <!-- Document items will be inserted here -->
+        </div>
+      </aside>
+
+      <!-- Middle Column: Document Preview -->
+      <main class="center-panel">
+        <div class="preview-header">
+          <div class="preview-title" id="preview-title">Select a document to view</div>
+          <div class="preview-actions">
+            <button id="edit-mode-btn" class="btn-icon" title="Edit Mode">✏️</button>
+            <button id="star-btn" class="btn-icon" title="Star">⭐</button>
+            <button id="copy-btn" class="btn-icon" title="Copy">📋</button>
+          </div>
+        </div>
+
+        <div class="preview-tabs">
+          <button class="tab-btn active" data-tab="clean">Clean Text</button>
+          <button class="tab-btn" data-tab="raw">Raw Text</button>
+          <button class="tab-btn" data-tab="diff">Comparison</button>
+        </div>
+
+        <div class="preview-content">
+          <!-- Clean Text Tab -->
+          <div class="tab-pane active" id="tab-clean">
+            <div class="text-viewer" id="clean-text-viewer">
+              <p class="placeholder">No document selected</p>
+            </div>
+          </div>
+
+          <!-- Raw Text Tab -->
+          <div class="tab-pane" id="tab-raw">
+            <div class="text-viewer" id="raw-text-viewer">
+              <p class="placeholder">No document selected</p>
+            </div>
+          </div>
+
+          <!-- Comparison Tab -->
+          <div class="tab-pane" id="tab-diff">
+            <div class="diff-viewer">
+              <div class="diff-column">
+                <h3>Raw</h3>
+                <div class="text-viewer" id="diff-raw"></div>
+              </div>
+              <div class="diff-column">
+                <h3>Clean</h3>
+                <div class="text-viewer" id="diff-clean"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-meta">
+          <div class="meta-item">
+            <span class="meta-label">Source:</span>
+            <a id="source-url" href="#" target="_blank" class="meta-value">-</a>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Created:</span>
+            <span id="created-at" class="meta-value">-</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Language:</span>
+            <span id="language" class="meta-value">-</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Words:</span>
+            <span id="word-count" class="meta-value">-</span>
+          </div>
+        </div>
+
+        <div class="preview-tags">
+          <div class="tags-label">Tags:</div>
+          <div id="tags-container" class="tags-container"></div>
+          <button id="add-tag-btn" class="btn-add-tag">+ Add Tag</button>
+        </div>
+      </main>
+
+      <!-- Right Column: Details & Actions -->
+      <aside class="right-panel">
+        <div class="panel-tabs">
+          <button class="panel-tab active" data-tab="chunks">Chunks</button>
+          <button class="panel-tab" data-tab="metadata">Metadata</button>
+          <button class="panel-tab" data-tab="embeddings">Embeddings</button>
+          <button class="panel-tab" data-tab="actions">Actions</button>
+        </div>
+
+        <!-- Chunks Tab -->
+        <div class="panel-content active" id="panel-chunks">
+          <div class="chunks-header">
+            <span id="chunks-count">0 chunks</span>
+            <button id="reorder-chunks-btn" class="btn-small">Reorder</button>
+          </div>
+          <div class="chunks-list" id="chunks-list">
+            <!-- Chunk items will be inserted here -->
+          </div>
+        </div>
+
+        <!-- Metadata Tab -->
+        <div class="panel-content" id="panel-metadata">
+          <div class="metadata-editor">
+            <div class="metadata-section">
+              <h3>Document Info</h3>
+              <div class="form-group">
+                <label>Title</label>
+                <input type="text" id="meta-title" class="form-input">
+              </div>
+              <div class="form-group">
+                <label>URL</label>
+                <input type="text" id="meta-url" class="form-input">
+              </div>
+              <div class="form-group">
+                <label>Language</label>
+                <select id="meta-language" class="form-input">
+                  <option value="en">English</option>
+                  <option value="zh">Chinese</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="es">Spanish</option>
+                  <option value="fr">French</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="metadata-section">
+              <h3>Key Points</h3>
+              <div id="key-points-list" class="editable-list"></div>
+              <button id="add-key-point-btn" class="btn-small">+ Add Point</button>
+            </div>
+
+            <div class="metadata-section">
+              <h3>Entities</h3>
+              <div id="entities-list" class="entities-grid"></div>
+            </div>
+
+            <div class="metadata-actions">
+              <button id="save-metadata-btn" class="btn-primary">Save Changes</button>
+              <button id="reset-metadata-btn" class="btn-secondary">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Embeddings Tab -->
+        <div class="panel-content" id="panel-embeddings">
+          <div class="embeddings-info">
+            <div class="info-card">
+              <div class="info-label">Embedding Status</div>
+              <div id="embedding-status" class="info-value">-</div>
+            </div>
+            <div class="info-card">
+              <div class="info-label">Chunks with Embeddings</div>
+              <div id="embedded-chunks-count" class="info-value">-</div>
+            </div>
+            <div class="info-card">
+              <div class="info-label">Vector Dimensions</div>
+              <div id="vector-dimensions" class="info-value">1536</div>
+            </div>
+            <div class="info-card">
+              <div class="info-label">Model</div>
+              <div id="embedding-model" class="info-value">text-embedding-3-small</div>
+            </div>
+          </div>
+
+          <div class="embeddings-actions">
+            <button id="regenerate-embeddings-btn" class="btn-primary">
+              🔄 Regenerate All Embeddings
+            </button>
+            <button id="embed-selected-btn" class="btn-secondary">
+              ⚡ Embed Selected Chunks
+            </button>
+          </div>
+
+          <div class="embeddings-preview">
+            <h3>Chunk Embedding Preview</h3>
+            <div id="embedding-preview" class="embedding-list"></div>
+          </div>
+        </div>
+
+        <!-- Actions Tab -->
+        <div class="panel-content" id="panel-actions">
+          <div class="actions-section">
+            <h3>Document Actions</h3>
+            <button id="export-doc-btn" class="action-btn">
+              <span class="btn-icon">💾</span>
+              Export Document
+            </button>
+            <button id="duplicate-doc-btn" class="action-btn">
+              <span class="btn-icon">📑</span>
+              Duplicate Document
+            </button>
+            <button id="rechunk-btn" class="action-btn">
+              <span class="btn-icon">🔨</span>
+              Re-chunk Document
+            </button>
+          </div>
+
+          <div class="actions-section">
+            <h3>Processing</h3>
+            <button id="reclean-btn" class="action-btn">
+              <span class="btn-icon">✨</span>
+              Re-clean with LLM
+            </button>
+            <button id="reanalyze-btn" class="action-btn">
+              <span class="btn-icon">🔍</span>
+              Re-analyze Content
+            </button>
+          </div>
+
+          <div class="actions-section danger-zone">
+            <h3>Danger Zone</h3>
+            <button id="delete-doc-btn" class="action-btn btn-danger">
+              <span class="btn-icon">🗑️</span>
+              Delete Document
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  <div id="tag-modal" class="modal">
+    <div class="modal-content">
+      <h2>Add Tag</h2>
+      <input type="text" id="new-tag-input" placeholder="Enter tag name...">
+      <div class="modal-actions">
+        <button id="add-tag-confirm" class="btn-primary">Add</button>
+        <button id="add-tag-cancel" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="src/db.js"></script>
+  <script src="src/manager.js"></script>
+</body>
+</html>

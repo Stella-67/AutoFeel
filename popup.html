@@ -95,15 +95,65 @@
       </div>
     </div>
 
+    <!-- Memory Search Section -->
+    <div class="memory-section">
+      <div class="section-header">
+        <h3>Memory Search</h3>
+        <div style="display: flex; gap: 8px;">
+          <button id="open-manager-btn" class="btn-primary">📚 Knowledge Manager</button>
+          <button id="view-all-btn" class="btn-small">View All</button>
+        </div>
+      </div>
+
+      <!-- Memory Stats -->
+      <div class="memory-stats">
+        <div class="stat-box">
+          <div class="stat-number" id="memory-doc-count">0</div>
+          <div class="stat-label">Documents</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number" id="memory-chunk-count">0</div>
+          <div class="stat-label">Chunks</div>
+        </div>
+      </div>
+
+      <!-- Search Interface -->
+      <div class="search-container">
+        <input type="text" id="memory-search" placeholder="Search your memories..." class="search-input">
+        <div class="search-options">
+          <label>
+            <input type="radio" name="search-type" value="fuzzy" checked>
+            Fuzzy Search
+          </label>
+          <label>
+            <input type="radio" name="search-type" value="semantic">
+            Semantic Search
+          </label>
+        </div>
+        <button id="search-btn" class="btn-primary">Search</button>
+      </div>
+
+      <!-- Search Results -->
+      <div id="search-results" class="search-results"></div>
+
+      <!-- Memory Actions -->
+      <div class="memory-actions">
+        <button id="export-memory-btn" class="btn-secondary btn-small">Export All</button>
+        <button id="clear-memory-btn" class="btn-secondary btn-small btn-danger">Clear All</button>
+      </div>
+    </div>
+
     <div class="usage-info">
       <h3>Usage Instructions</h3>
       <p>1. Select LLM provider and enter API Key</p>
       <p>2. Click "Test Connection" to verify API</p>
       <p>3. Click "Save Settings" to save configuration</p>
-      <p>4. Press <kbd>Option+C</kbd> (Mac) or <kbd>Alt+C</kbd> (Windows) on any webpage to send content to LLM</p>
+      <p>4. Press <kbd>Option+C</kbd> (Mac) or <kbd>Alt+C</kbd> (Windows) on any webpage to save content to memory</p>
+      <p>5. Use "Memory Search" above to find and recall saved content</p>
     </div>
   </div>
 
+  <script src="src/db.js"></script>
   <script src="src/popup.js"></script>
 </body>
 </html>
