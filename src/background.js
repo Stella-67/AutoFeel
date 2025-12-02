@@ -507,19 +507,29 @@ IMPORTANT RULES:
 4. If the context doesn't explicitly mention something but you can reasonably infer it, make that inference
 5. For questions asking about levels (low/medium/high) or ratings, analyze the context and choose the most appropriate level
 6. Keep answers concise and directly relevant to the question
-7. Only return an empty string "" if you have absolutely no basis to answer the question
+7. If you cannot answer a question, provide a brief explanation of why
 8. Return ONLY a valid JSON object with field IDs as keys
 
-Examples:
-- If asked "effort level" and context shows intensive 6-month research → answer "high"
-- If asked "experience level" and context shows beginner work → answer "low"
-- If asked "name" but no name in context → return ""
-
-Response format:
+Response format - Each field should be an object with "answer" and "explanation":
 {
-  "field_0": "answer for first field",
-  "field_1": "answer for second field"
-}`;
+  "field_0": {
+    "answer": "high",
+    "explanation": null
+  },
+  "field_1": {
+    "answer": "",
+    "explanation": "No information about email address found in the provided context. Please add contact information using Alt+C."
+  }
+}
+
+Rules for explanations:
+- If you successfully filled a field, set "explanation" to null
+- If you cannot answer, provide a clear, helpful explanation in English (1-2 sentences)
+- Suggest what information the user should save if relevant
+
+Examples:
+- Can answer: {"answer": "high", "explanation": null}
+- Cannot answer: {"answer": "", "explanation": "The context doesn't mention your phone number. Please save your contact details using Alt+C."}`;
 
     // Build form fields description with clear questions
     const fieldsDescription = formFields.map((field, index) => {
@@ -639,8 +649,18 @@ Return ONLY the JSON object with answers.`;
     Object.keys(answers).forEach(fieldId => {
       const fieldIndex = parseInt(fieldId.replace('field_', ''));
       const field = formFields[fieldIndex];
+      const fieldData = answers[fieldId];
+
+      // Handle both old format (string) and new format (object)
+      const answer = typeof fieldData === 'string' ? fieldData : fieldData.answer;
+      const explanation = typeof fieldData === 'object' ? fieldData.explanation : null;
+
       if (field) {
-        console.log(`  ${fieldId} (${field.label || field.placeholder}): "${answers[fieldId]}"`);
+        console.log(`  ${fieldId} (${field.label || field.placeholder}):`);
+        console.log(`    Answer: "${answer}"`);
+        if (explanation) {
+          console.log(`    Explanation: "${explanation}"`);
+        }
       }
     });
     console.log('');
