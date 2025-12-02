@@ -791,8 +791,10 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
   const inputMarginLeft = inputStyles.marginLeft;
 
   hint.style.cssText = `
-    margin-top: 4px;
+    margin-top: -6px;
     margin-left: ${inputMarginLeft};
+    min-width: 500px;
+    max-width: 800px;
     padding: 8px 12px;
     background-color: #fff3cd;
     border: 1px solid #ffc107;
@@ -857,11 +859,11 @@ async function fillFieldWithAnimation(input, answer) {
   input.scrollIntoView({ behavior: 'smooth', block: 'center' });
   await new Promise(resolve => setTimeout(resolve, 300));
 
-  // Add focus ring animation
+  // Add outline animation (without focusing)
   input.style.transition = 'all 0.3s ease';
-  input.style.outline = '3px solid #4CAF50';
-  input.style.outlineOffset = '2px';
-  input.focus();
+  input.style.setProperty('outline', '3px solid #4CAF50', 'important');
+  input.style.setProperty('outline-offset', '2px', 'important');
+  input.style.setProperty('box-shadow', 'none', 'important');
 
   await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -888,8 +890,10 @@ async function fillFieldWithAnimation(input, answer) {
   input.dispatchEvent(new Event('blur', { bubbles: true }));
 
   // Success animation
-  input.style.outline = '3px solid #4CAF50';
+  input.style.setProperty('outline', '3px solid #4CAF50', 'important');
+  input.style.setProperty('outline-offset', '2px', 'important');
   input.style.backgroundColor = '#e8f5e9';
+  input.style.setProperty('box-shadow', 'none', 'important');
 
   await new Promise(resolve => setTimeout(resolve, 400));
 
