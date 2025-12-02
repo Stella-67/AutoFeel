@@ -791,11 +791,11 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
   const inputMarginLeft = inputStyles.marginLeft;
 
   hint.style.cssText = `
-    margin-top: -6px;
+    margin-top: 24px;
     margin-left: ${inputMarginLeft};
     min-width: 500px;
     max-width: 800px;
-    padding: 8px 12px;
+    padding: 2px 8px;
     background-color: #fff3cd;
     border: 1px solid #ffc107;
     border-radius: 4px;
@@ -835,15 +835,6 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
   // Insert hint after the input
   input.parentElement.insertBefore(hint, input.nextSibling);
 
-  // Highlight the field briefly
-  input.style.transition = 'all 0.3s ease';
-  input.style.outline = '2px solid #ffc107';
-  input.style.outlineOffset = '2px';
-
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  input.style.outline = 'none';
-
   // Remove hint after 8 seconds or when user focuses the field
   const removeHint = () => {
     hint.style.animation = 'autofeel-hint-fadeout 0.3s ease';
@@ -859,11 +850,11 @@ async function fillFieldWithAnimation(input, answer) {
   input.scrollIntoView({ behavior: 'smooth', block: 'center' });
   await new Promise(resolve => setTimeout(resolve, 300));
 
-  // Add outline animation (without focusing)
+  // Add outline animation with background
   input.style.transition = 'all 0.3s ease';
-  input.style.setProperty('outline', '3px solid #4CAF50', 'important');
-  input.style.setProperty('outline-offset', '2px', 'important');
-  input.style.setProperty('box-shadow', 'none', 'important');
+  input.style.outline = '2px solid #4CAF50';
+  input.style.outlineOffset = '0px';
+  input.style.boxShadow = 'inset 0 0 0 100px rgba(76, 175, 80, 0.1)';
 
   await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -890,16 +881,15 @@ async function fillFieldWithAnimation(input, answer) {
   input.dispatchEvent(new Event('blur', { bubbles: true }));
 
   // Success animation
-  input.style.setProperty('outline', '3px solid #4CAF50', 'important');
-  input.style.setProperty('outline-offset', '2px', 'important');
-  input.style.backgroundColor = '#e8f5e9';
-  input.style.setProperty('box-shadow', 'none', 'important');
+  input.style.outline = '2px solid #4CAF50';
+  input.style.outlineOffset = '0px';
+  input.style.boxShadow = 'inset 0 0 0 100px rgba(76, 175, 80, 0.1)';
 
   await new Promise(resolve => setTimeout(resolve, 400));
 
   // Fade out animation
-  input.style.outline = 'none';
-  input.style.backgroundColor = '';
+  input.style.outline = '';
+  input.style.boxShadow = '';
 
   console.log(`[AutoFeel] ✓ Filled field with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
 }
@@ -934,78 +924,8 @@ async function fillFormFields(answers) {
     if (!answer || answer.trim() === '') {
       console.log(`[AutoFeel] ⏭️ Skipping ${fieldId} (empty answer, showing hint)`);
 
-      // Scroll to field
-      input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // Add a hint below the field
-      const hint = document.createElement('div');
-      hint.className = 'autofeel-empty-hint';
-
-      // Get input's computed styles to match alignment
-      const inputStyles = window.getComputedStyle(input);
-      const inputMarginLeft = inputStyles.marginLeft;
-
-      hint.style.cssText = `
-        margin-top: 4px;
-        margin-left: ${inputMarginLeft};
-        padding: 8px 12px;
-        background-color: #fff3cd;
-        border: 1px solid #ffc107;
-        border-radius: 4px;
-        color: #856404;
-        font-size: 13px;
-        line-height: 1.5;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-        animation: autofeel-hint-fadein 0.3s ease;
-        box-sizing: border-box;
-      `;
-
-      // Use LLM's explanation if available, otherwise use default message
-      const explanationText = explanation ||
-        'No relevant information found in your saved context. Please fill manually or use Alt+C to save more information.';
-
-      hint.innerHTML = `
-        <strong>💡 AutoFeel:</strong> ${explanationText}
-      `;
-
-      // Add CSS animations
-      if (!document.getElementById('autofeel-hint-styles')) {
-        const style = document.createElement('style');
-        style.id = 'autofeel-hint-styles';
-        style.textContent = `
-          @keyframes autofeel-hint-fadein {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-          @keyframes autofeel-hint-fadeout {
-            from { opacity: 1; transform: translateY(0); }
-            to { opacity: 0; transform: translateY(-10px); }
-          }
-        `;
-        document.head.appendChild(style);
-      }
-
-      // Insert hint after the input
-      input.parentElement.insertBefore(hint, input.nextSibling);
-
-      // Highlight the field briefly
-      input.style.transition = 'all 0.3s ease';
-      input.style.outline = '2px solid #ffc107';
-      input.style.outlineOffset = '2px';
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      input.style.outline = 'none';
-
-      // Remove hint after 8 seconds or when user focuses the field
-      const removeHint = () => {
-        hint.style.animation = 'autofeel-hint-fadeout 0.3s ease';
-        setTimeout(() => hint.remove(), 300);
-      };
-
-      setTimeout(removeHint, 8000);
-      input.addEventListener('focus', removeHint, { once: true });
+      // Use the dedicated function to show hint
+      await showEmptyFieldHint(input, fieldId, explanation);
 
       // Brief pause before next field
       if (i < fieldIds.length - 1) {
