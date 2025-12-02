@@ -319,12 +319,26 @@ class MemoryDB {
   /**
    * Normalize URL for duplicate detection
    * Removes query params, hash, trailing slashes, and converts to lowercase
+   * Special handling for Google Docs/Sheets/Slides to extract document ID
    */
   normalizeUrl(url) {
     if (!url) return '';
     try {
       const urlObj = new URL(url);
-      // Keep protocol + hostname + pathname, remove query and hash
+
+      // Special handling for Google Docs/Sheets/Slides
+      // Extract document ID and use a canonical format
+      // This ensures /edit, /preview, /edit?usp=sharing all match to the same doc
+      if (urlObj.hostname.includes('docs.google.com')) {
+        const match = urlObj.pathname.match(/\/(document|spreadsheets|presentation)\/d\/([^\/]+)/);
+        if (match) {
+          const docType = match[1];
+          const docId = match[2];
+          return `https://docs.google.com/${docType}/d/${docId}`;
+        }
+      }
+
+      // For other URLs, keep protocol + hostname + pathname, remove query and hash
       let normalized = `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}`;
       // Remove trailing slash
       normalized = normalized.replace(/\/$/, '');
@@ -354,7 +368,8 @@ class MemoryDB {
   }
 
   /**
-   * Calculate text similarity between two documents (simple word overlap)
+   * Calculate text similarity between two documents using cosine similarity
+   * This considers word frequency, not just word presence
    * @param {string} text1 - First text
    * @param {string} text2 - Second text
    * @returns {number} - Similarity score (0-1)
@@ -362,17 +377,45 @@ class MemoryDB {
   calculateTextSimilarity(text1, text2) {
     if (!text1 || !text2) return 0;
 
-    // Simple word-based similarity
-    const words1 = text1.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const words2 = text2.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    // Tokenize and count word frequencies
+    const words1 = text1.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const words2 = text2.toLowerCase().split(/\s+/).filter(w => w.length > 2);
 
-    const set1 = new Set(words1);
-    const set2 = new Set(words2);
+    // Build word frequency maps
+    const freq1 = {};
+    const freq2 = {};
 
-    const intersection = new Set([...set1].filter(w => set2.has(w)));
-    const union = new Set([...set1, ...set2]);
+    words1.forEach(word => {
+      freq1[word] = (freq1[word] || 0) + 1;
+    });
 
-    return union.size > 0 ? intersection.size / union.size : 0;
+    words2.forEach(word => {
+      freq2[word] = (freq2[word] || 0) + 1;
+    });
+
+    // Get all unique words
+    const allWords = new Set([...Object.keys(freq1), ...Object.keys(freq2)]);
+
+    // Calculate cosine similarity
+    let dotProduct = 0;
+    let magnitude1 = 0;
+    let magnitude2 = 0;
+
+    allWords.forEach(word => {
+      const f1 = freq1[word] || 0;
+      const f2 = freq2[word] || 0;
+
+      dotProduct += f1 * f2;
+      magnitude1 += f1 * f1;
+      magnitude2 += f2 * f2;
+    });
+
+    magnitude1 = Math.sqrt(magnitude1);
+    magnitude2 = Math.sqrt(magnitude2);
+
+    if (magnitude1 === 0 || magnitude2 === 0) return 0;
+
+    return dotProduct / (magnitude1 * magnitude2);
   }
 
   /**

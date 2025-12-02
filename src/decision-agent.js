@@ -15,9 +15,10 @@ class DecisionAgent {
   async decide(newDoc, newChunks) {
     console.log('[Decision Agent] Analyzing document...');
     console.log(`[Decision Agent] URL: ${newDoc.url}`);
+    console.log(`[Decision Agent] Normalized URL: ${this.memoryDB.normalizeUrl(newDoc.url)}`);
     console.log(`[Decision Agent] Title: ${newDoc.title}`);
 
-    // Check if document exists
+    // Check if document exists (uses normalized URL matching)
     const existingDoc = await this.memoryDB.findDocumentByUrl(newDoc.url);
 
     if (!existingDoc) {
@@ -34,51 +35,33 @@ class DecisionAgent {
     console.log(`[Decision Agent] Existing ID: ${existingDoc.doc_id}`);
     console.log(`[Decision Agent] Existing captured: ${existingDoc.captured_at}`);
 
-    // Check content similarity
+    // Check content similarity (use clean_text field)
     const similarity = this.memoryDB.calculateTextSimilarity(
-      existingDoc.content || '',
-      newDoc.content || ''
+      existingDoc.clean_text || '',
+      newDoc.clean_text || ''
     );
 
     console.log(`[Decision Agent] Content similarity: ${(similarity * 100).toFixed(1)}%`);
 
-    // Decision thresholds
-    const VERY_SIMILAR_THRESHOLD = 0.95; // >95% similar - skip
-    const SIMILAR_THRESHOLD = 0.80;      // 80-95% similar - smart update
-    const DIFFERENT_THRESHOLD = 0.50;    // <50% similar - major update
+    // Decision thresholds - ALWAYS UPDATE (user pressed Option+C intentionally)
+    const SMART_UPDATE_THRESHOLD = 0.85; // >85% similar - smart update (merge new chunks)
+    // <85% similar - replace (major changes)
 
-    if (similarity > VERY_SIMILAR_THRESHOLD) {
-      // Content is almost identical - skip
-      return {
-        action: 'skip',
-        reason: `Content too similar (${(similarity * 100).toFixed(1)}%)`,
-        strategy: 'no_change',
-        existingDoc: existingDoc,
-        similarity: similarity
-      };
-    } else if (similarity > SIMILAR_THRESHOLD) {
+    if (similarity > SMART_UPDATE_THRESHOLD) {
       // Minor changes - smart update (merge new info)
+      // Even if very similar, user wants to update, so we do smart_update
       return {
         action: 'update',
-        reason: `Minor changes detected (${(similarity * 100).toFixed(1)}% similar)`,
+        reason: `Content updated (${(similarity * 100).toFixed(1)}% similar)`,
         strategy: 'smart_update',
         existingDoc: existingDoc,
         similarity: similarity
       };
-    } else if (similarity > DIFFERENT_THRESHOLD) {
-      // Moderate changes - replace
-      return {
-        action: 'update',
-        reason: `Content updated (${(similarity * 100).toFixed(1)}% similar)`,
-        strategy: 'replace',
-        existingDoc: existingDoc,
-        similarity: similarity
-      };
     } else {
-      // Major changes - complete rewrite
+      // Major changes - complete replace
       return {
         action: 'update',
-        reason: `Major changes (${(similarity * 100).toFixed(1)}% similar)`,
+        reason: `Major changes detected (${(similarity * 100).toFixed(1)}% similar)`,
         strategy: 'replace',
         existingDoc: existingDoc,
         similarity: similarity
@@ -203,17 +186,7 @@ class DecisionAgent {
       }
     }
 
-    if (newUniqueChunks.length === 0) {
-      console.log(`[Decision Agent] No new unique chunks found, skipping update`);
-      return {
-        success: true,
-        action: 'skipped',
-        reason: 'No new information to add',
-        docId: existingDoc.doc_id
-      };
-    }
-
-    // Update document metadata
+    // Update document metadata (always update, even if no new chunks)
     const updatedDoc = {
       ...newDoc,
       doc_id: existingDoc.doc_id,
@@ -224,6 +197,21 @@ class DecisionAgent {
     };
 
     await this.memoryDB.saveDocument(updatedDoc);
+
+    if (newUniqueChunks.length === 0) {
+      // No new chunks, but still update document metadata (timestamp, etc.)
+      console.log(`[Decision Agent] ✅ Updated metadata (no new chunks, but timestamp refreshed)`);
+      return {
+        success: true,
+        action: 'updated',
+        reason: 'Document metadata updated',
+        docId: existingDoc.doc_id,
+        addedChunks: 0,
+        totalChunks: existingChunks.length
+      };
+    }
+
+    // Save new chunks
     await this.memoryDB.saveChunks(newUniqueChunks);
 
     console.log(`[Decision Agent] ✅ Smart update: added ${newUniqueChunks.length} new chunks`);

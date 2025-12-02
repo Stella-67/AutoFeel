@@ -224,7 +224,11 @@ async function handleSendToLLM() {
 
             case 'updated':
               if (saveResult.addedChunks !== undefined) {
-                completionMessage = `🔄 Updated: added ${saveResult.addedChunks} new chunks (total: ${saveResult.totalChunks})`;
+                if (saveResult.addedChunks === 0) {
+                  completionMessage = `🔄 Updated metadata (no new content)`;
+                } else {
+                  completionMessage = `🔄 Updated: +${saveResult.addedChunks} new chunks (total: ${saveResult.totalChunks})`;
+                }
               } else {
                 completionMessage = `🔄 Updated in memory (${saveResult.chunkCount} chunks)`;
               }
@@ -347,9 +351,17 @@ async function handleAutoFillForm() {
     // Generate and fill answers one by one
     let totalTokens = 0;
     let successCount = 0;
+    const processedFieldIds = new Set(); // Track processed fields to avoid duplicates
 
-    for (let i = 0; i < formFields.length; i++) {
+    let i = 0;
+    while (i < formFields.length) {
       const field = formFields[i];
+
+      // Skip if already processed (avoid duplicates from dynamic detection)
+      if (processedFieldIds.has(field.id)) {
+        i++;
+        continue;
+      }
 
       await notifyTab(tab.id, `Generating answer ${i + 1}/${formFields.length}...`, 'loading');
 
@@ -368,14 +380,36 @@ async function handleAutoFillForm() {
         }
 
         successCount++;
+        processedFieldIds.add(field.id); // Mark as processed
+
+        // Wait for page to update (conditional fields may appear)
+        await new Promise(resolve => setTimeout(resolve, 600));
+
+        // Check for newly appeared fields (dynamic form fields)
+        try {
+          const detectionResult = await chrome.tabs.sendMessage(tab.id, {
+            type: 'DETECT_FORM_FIELDS',
+            excludeFieldIds: Array.from(processedFieldIds)
+          });
+
+          if (detectionResult && detectionResult.fields && detectionResult.fields.length > 0) {
+            console.log(`[AutoFeel] 🆕 Detected ${detectionResult.fields.length} new fields after filling "${field.label}"`);
+
+            // Insert new fields right after current position (not at the end)
+            // This ensures conditional fields are filled immediately after their trigger
+            formFields.splice(i + 1, 0, ...detectionResult.fields);
+
+            console.log(`[AutoFeel] 📌 Inserted new fields at position ${i + 1}`);
+          }
+        } catch (detectError) {
+          console.log('[AutoFeel] No new fields detected or detection failed:', detectError.message);
+        }
       } else {
         console.error(`[AutoFeel] Failed to generate answer for ${field.id}:`, answer.error);
+        processedFieldIds.add(field.id); // Mark as processed even if failed
       }
 
-      // Brief pause between fields
-      if (i < formFields.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
+      i++;
     }
 
     await notifyTab(tab.id, `Form filled! ${successCount}/${formFields.length} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
@@ -404,6 +438,10 @@ async function generateSingleFieldAnswer(field, savedContext, config) {
 
     console.log('─'.repeat(80));
     console.log(`[AutoFeel Debug] 📝 FIELD: "${queryText}"`);
+    if (field.options && field.options.length > 0) {
+      console.log(`[AutoFeel Debug] 📋 Field type: ${field.type} with ${field.options.length} options`);
+      console.log('[AutoFeel Debug] Available options:', field.options.map(o => o.label).join(', '));
+    }
     console.log('─'.repeat(80));
 
     if (queryText) {
@@ -509,7 +547,16 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     userPrompt += `=== QUESTION ===\n${queryText}\n\n`;
 
-    userPrompt += `Please answer this question based on the context. Be concise and relevant.`;
+    // If field has options (radio/select), include them
+    if (field.options && field.options.length > 0) {
+      userPrompt += `=== AVAILABLE OPTIONS ===\n`;
+      field.options.forEach((option, index) => {
+        userPrompt += `${index + 1}. ${option.label}\n`;
+      });
+      userPrompt += `\nPlease choose ONE option from the list above. Return the exact label text as your answer.\n\n`;
+    } else {
+      userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
+    }
 
     const requestBody = buildLLMRequestBody(llmProvider, modelName, userPrompt, systemPrompt, {
       maxTokens: 500,

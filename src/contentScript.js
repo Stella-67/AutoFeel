@@ -564,19 +564,35 @@ function htmlToMarkdown(element) {
   return markdown.trim();
 }
 
-function detectFormFields() {
+function detectFormFields(excludeFieldIds = []) {
   const fields = [];
+  const processedRadioGroups = new Set(); // Track processed radio groups
+  const excludeSet = new Set(excludeFieldIds); // Convert to Set for fast lookup
 
-  // Find all text-based input fields
-  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea, select');
+  // Find all form fields (text inputs, textareas, selects, checkboxes, radios)
+  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input[type="checkbox"], input[type="radio"], input:not([type]), textarea, select');
 
   console.log('='.repeat(80));
   console.log('[AutoFeel Field Detection] 🔍 STARTING FIELD DETECTION');
+  if (excludeFieldIds.length > 0) {
+    console.log(`[AutoFeel Field Detection] 🔍 Re-detection mode: excluding ${excludeFieldIds.length} already processed fields`);
+  }
   console.log('='.repeat(80));
   console.log(`[AutoFeel Field Detection] Found ${inputs.length} total input elements`);
   console.log('');
 
-  let validFieldIndex = 0; // Counter for valid (non-hidden) fields
+  // Find the highest existing field ID to avoid conflicts
+  let maxFieldIndex = 0;
+  inputs.forEach(input => {
+    if (input.dataset.autofeelId) {
+      const match = input.dataset.autofeelId.match(/^field_(\d+)$/);
+      if (match) {
+        maxFieldIndex = Math.max(maxFieldIndex, parseInt(match[1]) + 1);
+      }
+    }
+  });
+
+  let validFieldIndex = maxFieldIndex; // Start from next available index
 
   inputs.forEach((input, index) => {
     console.log(`[AutoFeel Field Detection] --- Processing input ${index} ---`);
@@ -592,10 +608,46 @@ function detectFormFields() {
       return;
     }
 
+    // Special handling for radio buttons - group them by name
+    if (input.type === 'radio' && input.name) {
+      if (processedRadioGroups.has(input.name)) {
+        console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: radio group "${input.name}" already processed`);
+        console.log('');
+        return;
+      }
+      processedRadioGroups.add(input.name);
+      console.log(`[AutoFeel Field Detection] 📻 Processing radio group: ${input.name}`);
+    }
+
     // Try to find the label for this input
     let label = '';
     let placeholder = input.placeholder || '';
     const debugMethods = [];
+
+    // Special Method for Radio/Checkbox groups: Find fieldset legend or group label
+    if ((input.type === 'radio' || input.type === 'checkbox') && !label) {
+      const fieldset = input.closest('fieldset');
+      if (fieldset) {
+        const legend = fieldset.querySelector('legend');
+        if (legend) {
+          label = legend.textContent.trim();
+          debugMethods.push(`Method Radio/Checkbox (fieldset > legend): "${label}"`);
+        }
+      }
+
+      // Also try to find a common parent with role="group" or class containing "group"
+      if (!label) {
+        const groupParent = input.closest('[role="group"], [role="radiogroup"], .form-group, .question-group');
+        if (groupParent) {
+          // Find the first heading or label-like element in the group
+          const groupLabel = groupParent.querySelector('h1, h2, h3, h4, h5, h6, legend, .question, .label');
+          if (groupLabel && !groupLabel.contains(input)) {
+            label = groupLabel.textContent.trim();
+            debugMethods.push(`Method Radio/Checkbox (group label): "${label}"`);
+          }
+        }
+      }
+    }
 
     // Method 0: Use aria-labelledby (for Google Forms and accessible forms)
     if (!label && input.getAttribute('aria-labelledby')) {
@@ -712,9 +764,39 @@ function detectFormFields() {
       console.log(`    ${parentHTML}...`);
     }
 
-    // Use sequential numbering for valid fields only
-    const fieldId = `field_${validFieldIndex}`;
-    input.dataset.autofeelId = fieldId;
+    // Check if this field was already detected (has autofeel-id)
+    let fieldId;
+    let isNewField = false;
+
+    if (input.dataset.autofeelId) {
+      // Field already has an ID from previous detection
+      fieldId = input.dataset.autofeelId;
+
+      // Skip if this field is in the exclude list (already processed)
+      if (excludeSet.has(fieldId)) {
+        console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: already processed (${fieldId})`);
+        console.log('');
+        return;
+      }
+
+      // Field has ID but not in exclude list - means it's already in queue waiting to be processed
+      // Don't return it again to avoid duplicates
+      if (excludeFieldIds.length > 0) {
+        console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: already in queue (${fieldId})`);
+        console.log('');
+        return;
+      }
+
+      // First detection - keep the field
+      console.log(`[AutoFeel Field Detection] ✓ Field with existing ID: ${fieldId}`);
+      isNewField = false;
+    } else {
+      // New field, assign a new sequential ID
+      fieldId = `field_${validFieldIndex}`;
+      input.dataset.autofeelId = fieldId;
+      isNewField = true;
+      console.log(`[AutoFeel Field Detection] 🆕 New field detected: ${fieldId}`);
+    }
 
     const fieldInfo = {
       id: fieldId,
@@ -724,6 +806,39 @@ function detectFormFields() {
       value: input.value,
       name: input.name
     };
+
+    // For radio buttons, collect all options in the group
+    if (input.type === 'radio' && input.name) {
+      const radioGroup = document.querySelectorAll(`input[type="radio"][name="${input.name}"]`);
+      const options = [];
+
+      radioGroup.forEach((radio) => {
+        // Try to find label for each radio option
+        const optionLabel = findLabelForInput(radio);
+        const optionValue = radio.value || optionLabel;
+        if (optionLabel) {
+          options.push({ label: optionLabel, value: optionValue });
+        }
+      });
+
+      if (options.length > 0) {
+        fieldInfo.options = options;
+        console.log(`[AutoFeel Field Detection] 📻 Radio group has ${options.length} options:`, options.map(o => o.label).join(', '));
+      }
+    }
+
+    // For select dropdowns, collect all options
+    if (input.tagName.toLowerCase() === 'select') {
+      const selectOptions = Array.from(input.options);
+      const options = selectOptions
+        .filter(opt => opt.value && opt.text) // Skip empty options
+        .map(opt => ({ label: opt.text.trim(), value: opt.value }));
+
+      if (options.length > 0) {
+        fieldInfo.options = options;
+        console.log(`[AutoFeel Field Detection] 📋 Select has ${options.length} options:`, options.map(o => o.label).join(', '));
+      }
+    }
 
     fields.push(fieldInfo);
 
@@ -736,7 +851,10 @@ function detectFormFields() {
     });
     console.log('');
 
-    validFieldIndex++; // Increment only for valid fields
+    // Only increment counter if we assigned a NEW ID
+    if (isNewField) {
+      validFieldIndex++;
+    }
   });
 
   console.log('='.repeat(80));
@@ -771,8 +889,20 @@ async function fillSingleField(fieldId, fieldData) {
     return;
   }
 
-  // Fill the field with animation
-  await fillFieldWithAnimation(input, answer);
+  // Fill based on field type
+  const fieldType = input.tagName.toLowerCase();
+  const inputType = input.type ? input.type.toLowerCase() : '';
+
+  if (fieldType === 'select') {
+    await fillSelectField(input, answer);
+  } else if (inputType === 'checkbox') {
+    await fillCheckboxField(input, answer);
+  } else if (inputType === 'radio') {
+    await fillRadioField(input, answer);
+  } else {
+    // Text input, textarea, etc.
+    await fillFieldWithAnimation(input, answer);
+  }
 }
 
 async function showEmptyFieldHint(input, fieldId, explanation) {
@@ -785,6 +915,15 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
   // Add a hint below the field
   const hint = document.createElement('div');
   hint.className = 'autofeel-empty-hint';
+
+  // For radio/checkbox, find a wider container for hint placement
+  let containerForHint = input.parentElement;
+  if (input.type === 'radio' || input.type === 'checkbox') {
+    // Try to find fieldset or form-group container
+    const fieldset = input.closest('fieldset');
+    const formGroup = input.closest('.form-group, [role="group"], [role="radiogroup"]');
+    containerForHint = fieldset || formGroup || input.parentElement;
+  }
 
   // Get input's computed styles to match alignment
   const inputStyles = window.getComputedStyle(input);
@@ -805,6 +944,8 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
     animation: autofeel-hint-fadein 0.3s ease;
     box-sizing: border-box;
+    display: block;
+    width: fit-content;
   `;
 
   // Use LLM's explanation if available
@@ -832,8 +973,14 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
     document.head.appendChild(style);
   }
 
-  // Insert hint after the input
-  input.parentElement.insertBefore(hint, input.nextSibling);
+  // Insert hint after the input (or after container for radio/checkbox)
+  if (containerForHint === input.parentElement) {
+    // Normal case - insert after input
+    input.parentElement.insertBefore(hint, input.nextSibling);
+  } else {
+    // Radio/checkbox case - insert at end of container
+    containerForHint.appendChild(hint);
+  }
 
   // Remove hint after 8 seconds or when user focuses the field
   const removeHint = () => {
@@ -893,6 +1040,159 @@ async function fillFieldWithAnimation(input, answer) {
   input.style.boxShadow = '';
 
   console.log(`[AutoFeel] ✓ Filled field with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
+}
+
+async function fillSelectField(select, answer) {
+  // Scroll to field
+  select.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Highlight animation
+  select.style.transition = 'all 0.3s ease';
+  select.style.outline = '2px solid #4CAF50';
+  select.style.outlineOffset = '0px';
+  select.style.boxShadow = 'inset 0 0 0 100px rgba(76, 175, 80, 0.1)';
+
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  // Try to find matching option by text content (fuzzy match)
+  const options = Array.from(select.options);
+  const answerLower = answer.toLowerCase().trim();
+
+  let matchedOption = options.find(opt => opt.text.toLowerCase().trim() === answerLower);
+
+  if (!matchedOption) {
+    // Try partial match
+    matchedOption = options.find(opt =>
+      opt.text.toLowerCase().includes(answerLower) ||
+      answerLower.includes(opt.text.toLowerCase().trim())
+    );
+  }
+
+  if (matchedOption) {
+    select.value = matchedOption.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    console.log(`[AutoFeel] ✓ Selected option: "${matchedOption.text}"`);
+  } else {
+    console.warn(`[AutoFeel] ⚠️ No matching option found for: "${answer}"`);
+  }
+
+  await new Promise(resolve => setTimeout(resolve, 400));
+
+  // Fade out animation
+  select.style.outline = '';
+  select.style.boxShadow = '';
+}
+
+async function fillCheckboxField(checkbox, answer) {
+  // Scroll to field
+  checkbox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Determine if should be checked based on answer
+  const shouldCheck = ['yes', 'true', '1', 'checked', 'check', 'select'].includes(answer.toLowerCase().trim());
+
+  // Highlight animation
+  checkbox.parentElement.style.transition = 'all 0.3s ease';
+  checkbox.parentElement.style.outline = '2px solid #4CAF50';
+  checkbox.parentElement.style.outlineOffset = '2px';
+
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  if (checkbox.checked !== shouldCheck) {
+    checkbox.checked = shouldCheck;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  console.log(`[AutoFeel] ✓ Checkbox ${shouldCheck ? 'checked' : 'unchecked'}`);
+
+  await new Promise(resolve => setTimeout(resolve, 400));
+
+  // Fade out animation
+  checkbox.parentElement.style.outline = '';
+}
+
+async function fillRadioField(radio, answer) {
+  // For radio buttons, find the group and select the matching one
+  const radioGroup = document.querySelectorAll(`input[name="${radio.name}"]`);
+
+  // Scroll to first radio
+  if (radioGroup.length > 0) {
+    radioGroup[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+
+  const answerLower = answer.toLowerCase().trim();
+  let matchedRadio = null;
+
+  // Try to find matching radio by label text
+  for (const r of radioGroup) {
+    const label = findLabelForInput(r);
+    if (label && label.toLowerCase().includes(answerLower)) {
+      matchedRadio = r;
+      break;
+    }
+  }
+
+  // If no match by label, try by value
+  if (!matchedRadio) {
+    matchedRadio = Array.from(radioGroup).find(r =>
+      r.value.toLowerCase() === answerLower
+    );
+  }
+
+  if (matchedRadio) {
+    // Highlight animation on parent element
+    matchedRadio.parentElement.style.transition = 'all 0.3s ease';
+    matchedRadio.parentElement.style.outline = '2px solid #4CAF50';
+    matchedRadio.parentElement.style.outlineOffset = '2px';
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // For custom radio components (like Workday), we need to simulate a real click
+    // First, try clicking the associated label (more reliable for custom components)
+    const label = matchedRadio.id
+      ? document.querySelector(`label[for="${matchedRadio.id}"]`)
+      : matchedRadio.closest('label');
+
+    if (label) {
+      // Click the label (this triggers the custom UI)
+      label.click();
+    } else {
+      // Fallback: click the radio directly
+      matchedRadio.click();
+    }
+
+    // Also set checked property and dispatch events as backup
+    matchedRadio.checked = true;
+    matchedRadio.dispatchEvent(new Event('change', { bubbles: true }));
+    matchedRadio.dispatchEvent(new Event('input', { bubbles: true }));
+    matchedRadio.dispatchEvent(new Event('click', { bubbles: true }));
+
+    console.log(`[AutoFeel] ✓ Selected radio: "${answer}"`);
+
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    // Fade out animation
+    matchedRadio.parentElement.style.outline = '';
+  } else {
+    console.warn(`[AutoFeel] ⚠️ No matching radio found for: "${answer}"`);
+  }
+}
+
+// Helper function to find label text for an input
+function findLabelForInput(input) {
+  if (input.id) {
+    const label = document.querySelector(`label[for="${input.id}"]`);
+    if (label) return label.textContent.trim();
+  }
+
+  const parentLabel = input.closest('label');
+  if (parentLabel) return parentLabel.textContent.trim();
+
+  return '';
 }
 
 async function fillFormFields(answers) {
@@ -1019,7 +1319,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   if (request.type === 'DETECT_FORM_FIELDS') {
     try {
-      const fields = detectFormFields();
+      const excludeFieldIds = request.excludeFieldIds || [];
+      const fields = detectFormFields(excludeFieldIds);
       sendResponse({ success: true, fields: fields });
     } catch (error) {
       sendResponse({ success: false, error: error.message });
