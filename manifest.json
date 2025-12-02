@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AutoFeel - AI Page Assistant",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "description": "Send page content to LLM for analysis using Option+C hotkey",
   "permissions": [
     "activeTab",

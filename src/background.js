@@ -340,7 +340,13 @@ async function handleAutoFillForm() {
     console.log('');
 
     // Clear filled field tracking (start fresh)
-    await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_FILLED_FIELDS' });
+    console.log('[AutoFeel] 🗑️🗑️🗑️ SENDING CLEAR_FILLED_FIELDS 🗑️🗑️🗑️');
+    try {
+      const clearResult = await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_FILLED_FIELDS' });
+      console.log('[AutoFeel] ✓ CLEAR_FILLED_FIELDS result:', clearResult);
+    } catch (e) {
+      console.warn('[AutoFeel] ⚠️ CLEAR_FILLED_FIELDS failed (old content script?):', e.message);
+    }
 
     await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
 
@@ -381,7 +387,9 @@ async function handleAutoFillForm() {
           const markResult = await chrome.tabs.sendMessage(tab.id, {
             type: 'MARK_AS_FILLED',
             fieldId: field.id,
-            fieldLabel: field.label  // Pass label to track filled fields
+            fieldLabel: field.label,
+            fieldName: field.name,  // Pass name for composite key
+            fieldType: field.type   // Pass type for composite key
           });
           console.log(`[AutoFeel] ✓ MARK_AS_FILLED result:`, markResult);
         } catch (markError) {

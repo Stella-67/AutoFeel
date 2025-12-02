@@ -1,5 +1,6 @@
-// Track filled fields by label (survives DOM recreation)
-const filledFieldLabels = new Set();
+// Track filled fields by composite key: label||name||type (survives DOM recreation)
+// Using composite key to handle multiple fields with same label
+const filledFieldKeys = new Set();
 
 function getVisibleText() {
   // Special handling for different platforms
@@ -867,11 +868,16 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
       name: input.name
     };
 
-    // CRITICAL: Skip fields already filled (check by label, survives DOM recreation)
-    if (onlyUnfilled && label && filledFieldLabels.has(label)) {
-      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: "${label}" already filled (by label tracking)`);
-      console.log('');
-      return;
+    // CRITICAL: Skip fields already filled (check by composite key, survives DOM recreation)
+    if (onlyUnfilled && label) {
+      // Create composite key to uniquely identify field (handles duplicate labels)
+      const fieldKey = `${label}||${input.name || ''}||${fieldType}`;
+      console.log(`[AutoFeel CS] 🔍 Checking if field is filled. Key: "${fieldKey}", filledFieldKeys size: ${filledFieldKeys.size}`);
+      if (filledFieldKeys.has(fieldKey)) {
+        console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: "${label}" (${fieldType}, name: ${input.name || 'none'}) already filled`);
+        console.log('');
+        return;
+      }
     }
 
     // For radio buttons, collect all options in the group
@@ -1741,14 +1747,29 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   if (request.type === 'CLEAR_FILLED_FIELDS') {
     // Clear filled field tracking (start fresh)
-    filledFieldLabels.clear();
-    console.log('[AutoFeel] 🗑️ Cleared filled field tracking');
+    console.log('[AutoFeel CS] 🗑️🗑️🗑️ CLEAR_FILLED_FIELDS received 🗑️🗑️🗑️');
+    filledFieldKeys.clear();
+    console.log('[AutoFeel CS] ✓ Cleared filled field tracking, size now:', filledFieldKeys.size);
     sendResponse({ success: true });
     return true;
   }
 
   if (request.type === 'MARK_AS_FILLED') {
     // Mark field as filled to prevent re-detection
+    console.log(`[AutoFeel CS] 🔵 MARK_AS_FILLED received:`, request.fieldId, 'label:', request.fieldLabel, 'name:', request.fieldName, 'type:', request.fieldType);
+
+    // CRITICAL: Track by composite key (survives DOM recreation, handles duplicate labels)
+    if (request.fieldLabel) {
+      const fieldKey = `${request.fieldLabel}||${request.fieldName || ''}||${request.fieldType}`;
+      filledFieldKeys.add(fieldKey);
+      console.log(`[AutoFeel CS] ✅✅✅ MARKED "${request.fieldLabel}" (${request.fieldType}, name: ${request.fieldName || 'none'}) AS FILLED ✅✅✅`);
+      console.log(`[AutoFeel CS] Key: "${fieldKey}"`);
+      console.log(`[AutoFeel CS] filledFieldKeys now has ${filledFieldKeys.size} items:`, Array.from(filledFieldKeys));
+    } else {
+      console.error(`[AutoFeel CS] ❌ NO LABEL PROVIDED for ${request.fieldId}`);
+    }
+
+    // Also mark DOM element if it exists
     const input = document.querySelector(`[data-autofeel-id="${request.fieldId}"]`);
     if (input) {
       input.dataset.autofeelFilled = 'true';
@@ -1759,15 +1780,11 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         const radioGroup = document.querySelectorAll(`input[type="radio"][name="${input.name}"]`);
         radioGroup.forEach(radio => radio.dataset.autofeelFilled = 'true');
       }
-
-      // CRITICAL: Also track by label (survives DOM recreation)
-      if (request.fieldLabel) {
-        filledFieldLabels.add(request.fieldLabel);
-        console.log(`[AutoFeel] ✅✅✅ MARKED "${request.fieldLabel}" AS FILLED (label tracked) ✅✅✅`);
-      } else {
-        console.log(`[AutoFeel] ✅✅✅ MARKED ${request.fieldId} AS FILLED ✅✅✅`);
-      }
+      console.log(`[AutoFeel] ✓ Also marked DOM element ${request.fieldId}`);
+    } else {
+      console.warn(`[AutoFeel] ⚠️ Field ${request.fieldId} not found in DOM (but label tracked)`);
     }
+
     sendResponse({ success: true });
     return true;
   }
