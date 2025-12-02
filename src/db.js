@@ -229,6 +229,166 @@ class MemoryDB {
   }
 
   /**
+   * Normalize URL for duplicate detection
+   * Removes query params, hash, trailing slashes, and converts to lowercase
+   */
+  normalizeUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      // Keep protocol + hostname + pathname, remove query and hash
+      let normalized = `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}`;
+      // Remove trailing slash
+      normalized = normalized.replace(/\/$/, '');
+      return normalized.toLowerCase();
+    } catch (error) {
+      // If URL parsing fails, return original URL in lowercase
+      return url.toLowerCase();
+    }
+  }
+
+  /**
+   * Find existing document by URL (using normalized URL matching)
+   * @param {string} url - The URL to search for
+   * @returns {Promise<object|null>} - Existing document or null
+   */
+  async findDocumentByUrl(url) {
+    if (!this.db) await this.init();
+
+    const normalizedUrl = this.normalizeUrl(url);
+    const allDocs = await this.getAllDocuments({ limit: 10000 });
+
+    // Find document with matching normalized URL
+    return allDocs.find(doc => {
+      const docNormalizedUrl = this.normalizeUrl(doc.url);
+      return docNormalizedUrl === normalizedUrl;
+    }) || null;
+  }
+
+  /**
+   * Calculate text similarity between two documents (simple word overlap)
+   * @param {string} text1 - First text
+   * @param {string} text2 - Second text
+   * @returns {number} - Similarity score (0-1)
+   */
+  calculateTextSimilarity(text1, text2) {
+    if (!text1 || !text2) return 0;
+
+    // Simple word-based similarity
+    const words1 = text1.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const words2 = text2.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+    const set1 = new Set(words1);
+    const set2 = new Set(words2);
+
+    const intersection = new Set([...set1].filter(w => set2.has(w)));
+    const union = new Set([...set1, ...set2]);
+
+    return union.size > 0 ? intersection.size / union.size : 0;
+  }
+
+  /**
+   * Check if document should be updated (content has changed significantly)
+   * @param {object} existingDoc - Existing document
+   * @param {object} newDoc - New document
+   * @returns {object} - { shouldUpdate: boolean, changes: object }
+   */
+  shouldUpdateDocument(existingDoc, newDoc) {
+    const changes = {
+      titleChanged: existingDoc.title !== newDoc.title,
+      textChanged: false,
+      wordCountChanged: false,
+      chunkCountChanged: false
+    };
+
+    // Calculate text similarity
+    const textSimilarity = this.calculateTextSimilarity(
+      existingDoc.clean_text,
+      newDoc.clean_text
+    );
+
+    changes.textChanged = textSimilarity < 0.9; // If less than 90% similar, consider changed
+    changes.textSimilarity = textSimilarity;
+
+    // Check metadata changes
+    changes.wordCountChanged = Math.abs(
+      existingDoc.metadata.word_count - newDoc.metadata.word_count
+    ) > existingDoc.metadata.word_count * 0.1; // 10% change threshold
+
+    changes.chunkCountChanged = existingDoc.metadata.chunk_count !== newDoc.metadata.chunk_count;
+
+    // Decide if should update
+    const shouldUpdate = changes.titleChanged ||
+                        changes.textChanged ||
+                        changes.wordCountChanged ||
+                        changes.chunkCountChanged;
+
+    return { shouldUpdate, changes, textSimilarity };
+  }
+
+  /**
+   * Update existing document and replace its chunks
+   * @param {string} docId - Document ID to update
+   * @param {object} newDocumentSchema - New document data
+   * @param {Array} newChunkSchemas - New chunks
+   * @returns {Promise<object>} - Update statistics
+   */
+  async updateDocument(docId, newDocumentSchema, newChunkSchemas) {
+    if (!this.db) await this.init();
+
+    // Get old document for comparison
+    const oldDoc = await this.getDocument(docId);
+    if (!oldDoc) {
+      throw new Error('Document not found');
+    }
+
+    // Get old chunks
+    const oldChunks = await this.getChunksByDocId(docId);
+
+    // Update document with new data, but preserve doc_id and add version info
+    const updatedDoc = {
+      ...newDocumentSchema,
+      doc_id: docId, // Keep original ID
+      metadata: this.trackVersionChange(oldDoc, newDocumentSchema)
+    };
+
+    return new Promise(async (resolve, reject) => {
+      try {
+        const transaction = this.db.transaction([DOCUMENTS_STORE, CHUNKS_STORE], 'readwrite');
+        const docsStore = transaction.objectStore(DOCUMENTS_STORE);
+        const chunksStore = transaction.objectStore(CHUNKS_STORE);
+
+        // Update document
+        docsStore.put(updatedDoc);
+
+        // Delete old chunks
+        oldChunks.forEach(chunk => {
+          chunksStore.delete(chunk.chunk_id);
+        });
+
+        // Add new chunks
+        newChunkSchemas.forEach(chunk => {
+          chunksStore.put(chunk);
+        });
+
+        transaction.oncomplete = () => {
+          console.log(`[AutoFeel DB] Updated document ${docId}`);
+          resolve({
+            docId: docId,
+            updated: true,
+            oldChunkCount: oldChunks.length,
+            newChunkCount: newChunkSchemas.length,
+            version: updatedDoc.metadata.version
+          });
+        };
+
+        transaction.onerror = () => reject(transaction.error);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
    * Semantic search using vector similarity
    * @param {Array} queryEmbedding - The embedding vector of the search query
    * @param {Number} topK - Number of top results to return
@@ -360,6 +520,103 @@ class MemoryDB {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Get version history for a document
+   * @param {string} docId - Document ID
+   * @returns {object} - Version information
+   */
+  async getVersionInfo(docId) {
+    const doc = await this.getDocument(docId);
+
+    if (!doc) {
+      return null;
+    }
+
+    return {
+      docId: docId,
+      currentVersion: doc.metadata.version || 1,
+      updateCount: doc.metadata.update_count || 0,
+      firstCaptured: doc.metadata.first_captured_at || doc.captured_at,
+      lastCaptured: doc.captured_at,
+      previousCaptured: doc.metadata.previous_captured_at,
+      versionHistory: doc.metadata.version_history || []
+    };
+  }
+
+  /**
+   * Get all documents with version information
+   * @returns {array} - Array of documents with version info
+   */
+  async getAllDocumentsWithVersions() {
+    const allDocs = await this.getAllDocuments({ limit: 10000 });
+
+    return allDocs.map(doc => ({
+      doc_id: doc.doc_id,
+      title: doc.title,
+      url: doc.url,
+      version: doc.metadata.version || 1,
+      updateCount: doc.metadata.update_count || 0,
+      lastUpdated: doc.captured_at,
+      hasMultipleVersions: (doc.metadata.version || 1) > 1
+    }));
+  }
+
+  /**
+   * Track version change in document metadata
+   * This is called internally by updateDocument()
+   * @param {object} oldDoc - Previous version
+   * @param {object} newDoc - New version
+   * @returns {object} - Enhanced metadata with version tracking
+   */
+  trackVersionChange(oldDoc, newDoc) {
+    const versionHistory = oldDoc.metadata.version_history || [];
+
+    // Add current version to history
+    versionHistory.push({
+      version: oldDoc.metadata.version || 1,
+      capturedAt: oldDoc.captured_at,
+      title: oldDoc.title,
+      wordCount: oldDoc.metadata.word_count,
+      chunkCount: oldDoc.metadata.chunk_count
+    });
+
+    // Keep only last 10 versions in history to avoid bloat
+    const recentHistory = versionHistory.slice(-10);
+
+    return {
+      ...newDoc.metadata,
+      version: (oldDoc.metadata.version || 1) + 1,
+      update_count: (oldDoc.metadata.update_count || 0) + 1,
+      first_captured_at: oldDoc.metadata.first_captured_at || oldDoc.captured_at,
+      previous_captured_at: oldDoc.captured_at,
+      version_history: recentHistory
+    };
+  }
+
+  /**
+   * Get documents that have been updated (version > 1)
+   * @returns {array} - Array of updated documents
+   */
+  async getUpdatedDocuments() {
+    const allDocs = await this.getAllDocuments({ limit: 10000 });
+
+    return allDocs.filter(doc => (doc.metadata.version || 1) > 1)
+      .sort((a, b) => new Date(b.captured_at) - new Date(a.captured_at));
+  }
+
+  /**
+   * Get documents by update frequency
+   * @param {number} minUpdates - Minimum number of updates
+   * @returns {array} - Frequently updated documents
+   */
+  async getFrequentlyUpdatedDocuments(minUpdates = 3) {
+    const allDocs = await this.getAllDocuments({ limit: 10000 });
+
+    return allDocs
+      .filter(doc => (doc.metadata.update_count || 0) >= minUpdates)
+      .sort((a, b) => (b.metadata.update_count || 0) - (a.metadata.update_count || 0));
   }
 
   /**

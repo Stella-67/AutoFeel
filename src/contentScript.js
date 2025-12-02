@@ -250,10 +250,38 @@ function removeUIElements(element, selectors) {
 }
 
 function getPageMetadata() {
+  // Enhanced metadata collection for Perception Agent
+  const inputs = document.querySelectorAll('input, textarea, select');
+  const textareas = document.querySelectorAll('textarea');
+  const editableElements = document.querySelectorAll('[contenteditable="true"]');
+  const codeBlocks = document.querySelectorAll('pre, code, .highlight');
+
   return {
     title: document.title,
     url: window.location.href,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+
+    // Form detection
+    formFieldCount: inputs.length,
+    hasTextarea: textareas.length > 0,
+    textareaCount: textareas.length,
+
+    // Editing detection
+    isContentEditable: editableElements.length > 0,
+    editableElementCount: editableElements.length,
+    isEditable: textareas.length > 0 || editableElements.length > 0,
+
+    // Content type indicators
+    hasCodeBlocks: codeBlocks.length > 0,
+    codeBlockCount: codeBlocks.length,
+
+    // Page structure
+    headingCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+    linkCount: document.querySelectorAll('a').length,
+    imageCount: document.querySelectorAll('img').length,
+
+    // Word count estimate (will be updated with actual content)
+    word_count: 0 // Will be set by caller
   };
 }
 
@@ -267,15 +295,17 @@ async function getPageContent() {
     console.log('[AutoFeel] Using user selection:', selectedText.length, 'characters');
 
     const metadata = getPageMetadata();
+    const wordCount = selectedText.split(/\s+/).length;
     metadata.source = 'selection';
     metadata.selectionLength = selectedText.length;
+    metadata.word_count = wordCount;
 
     return {
       text: selectedText,
       html: '',
       markdown: selectedText,
       metadata: metadata,
-      wordCount: selectedText.split(/\s+/).length,
+      wordCount: wordCount,
       source: 'selection'
     };
   }
@@ -295,14 +325,16 @@ async function getPageContent() {
   const visibleText = getVisibleText();
   const structuredContent = getStructuredContent();
   const metadata = getPageMetadata();
+  const wordCount = visibleText.split(/\s+/).length;
   metadata.source = 'full_page';
+  metadata.word_count = wordCount;
 
   return {
     text: visibleText,
     html: structuredContent.html,
     markdown: structuredContent.markdown,
     metadata: metadata,
-    wordCount: visibleText.split(/\s+/).length,
+    wordCount: wordCount,
     source: 'full_page'
   };
 }

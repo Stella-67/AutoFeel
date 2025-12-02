@@ -1,5 +1,8 @@
-// Import database module
-importScripts('src/db.js');
+// Import database module (absolute path from extension root)
+importScripts('/src/db.js');
+importScripts('/src/perception-agent.js');
+importScripts('/src/reasoning-agent.js');
+importScripts('/src/action-agent.js');
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'send-to-llm') {
@@ -28,6 +31,24 @@ async function handleSendToLLM() {
     }
 
     const rawContent = response.content;
+
+    // ==================== PERCEPTION: Observe Context ====================
+    console.log('[AutoFeel Agentic] Starting perception...');
+
+    // Track visit and get perception
+    await perceptionAgent.trackVisit(rawContent.metadata.url);
+    const perception = await perceptionAgent.observe(rawContent);
+
+    console.log('[AutoFeel Agentic] Perception complete:', {
+      pageType: `${perception.currentPage.pageType}/${perception.currentPage.pageSubtype}`,
+      confidence: perception.currentPage.confidence,
+      visitCount: perception.userBehavior.visitCount,
+      isRepeatedVisit: perception.userBehavior.isRepeatedVisit
+    });
+
+    // Add perception to rawContent for use in downstream processing
+    rawContent.perception = perception;
+
     const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
 
     if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
@@ -126,30 +147,125 @@ async function handleSendToLLM() {
       }
     });
 
-    // Save to IndexedDB (persistent memory storage)
-    await notifyTab(tab.id, 'Saving to memory database...', 'loading');
+    // ==================== REASONING: Analyze Situation & Decide ====================
+    await notifyTab(tab.id, 'Analyzing context...', 'loading');
 
+    let saveResult = null;
     try {
       // Initialize database
       await memoryDB.init();
 
-      // Save document
-      await memoryDB.saveDocument(documentSchema);
+      // Check for existing document with same URL
+      const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
 
-      // Save chunks
-      await memoryDB.saveChunks(chunkSchemas);
+      // Prepare context for reasoning
+      const reasoningContext = {
+        hasExisting: !!existingDoc,
+        contentChanged: false,
+        similarity: 1.0
+      };
 
-      console.log('[AutoFeel] Successfully saved to memory database');
+      if (existingDoc) {
+        console.log('[AutoFeel] Found existing document:', existingDoc.doc_id);
+
+        // Check if document should be updated
+        const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
+        reasoningContext.contentChanged = updateCheck.shouldUpdate;
+        reasoningContext.similarity = updateCheck.textSimilarity;
+
+        console.log('[AutoFeel] Update check:', updateCheck);
+      }
+
+      // Let reasoning agent decide what to do
+      console.log('[AutoFeel Agentic] Starting reasoning...');
+      const agenticDecision = await reasoningAgent.reason(perception, reasoningContext);
+
+      console.log('[AutoFeel Agentic] Reasoning complete:');
+      console.log(reasoningAgent.explainDecision(agenticDecision));
+
+      // ==================== ACTION: Execute Strategy ====================
+      console.log('[AutoFeel Agentic] Executing action...');
+
+      // Initialize action agent
+      await actionAgent.init(memoryDB);
+
+      // Prepare data for action execution
+      const actionData = {
+        documentSchema: documentSchema,
+        chunkSchemas: chunkSchemas
+      };
+
+      // Execute action based on decision
+      await notifyTab(tab.id, 'Executing strategy...', 'loading');
+
+      saveResult = await actionAgent.execute(
+        agenticDecision,
+        actionData,
+        existingDoc
+      );
+
+      console.log('[AutoFeel Agentic] Action executed:', saveResult);
+
+      console.log('[AutoFeel] Save result:', saveResult);
     } catch (dbError) {
       console.error('[AutoFeel] Failed to save to database:', dbError);
       await notifyTab(tab.id, `Warning: Failed to save to memory database: ${dbError.message}`, 'error');
     }
 
-    // Build success message with token usage
-    let successMessage = `Memory saved! Document: ${documentSchema.title.substring(0, 50)}... (${chunkSchemas.length} chunks)`;
+    // Build success message with token usage and save status
+    let successMessage = '';
+
+    if (saveResult && saveResult.success) {
+      switch (saveResult.action) {
+        case 'skipped':
+          successMessage = `⏭️ Skipped: ${saveResult.reason}`;
+          if (reasoningContext.similarity) {
+            successMessage += ` (${(reasoningContext.similarity * 100).toFixed(0)}% similar)`;
+          }
+          break;
+
+        case 'updated':
+          successMessage = `🔄 Updated: ${documentSchema.title.substring(0, 40)}... (v${saveResult.version}, ${saveResult.newChunkCount} chunks)`;
+          break;
+
+        case 'created':
+          successMessage = `✅ Saved: ${documentSchema.title.substring(0, 40)}... (${saveResult.chunkCount} chunks)`;
+          break;
+
+        case 'replaced':
+          successMessage = `🔄 Replaced: ${documentSchema.title.substring(0, 40)}... (${saveResult.chunkCount} chunks)`;
+          break;
+
+        default:
+          successMessage = `Memory saved! Document: ${documentSchema.title.substring(0, 50)}... (${chunkSchemas.length} chunks)`;
+      }
+    } else {
+      successMessage = `Memory saved! Document: ${documentSchema.title.substring(0, 50)}... (${chunkSchemas.length} chunks)`;
+    }
+
+    // Add perception info
+    if (perception) {
+      const pageTypeEmoji = {
+        'profile': '👤',
+        'document': '📑',
+        'form': '📋',
+        'content': '📄',
+        'social': '💬',
+        'utility': '⚙️',
+        'unknown': '📄'
+      };
+
+      const emoji = pageTypeEmoji[perception.currentPage.pageType] || '📄';
+      successMessage += ` | ${emoji} ${perception.currentPage.pageSubtype}`;
+
+      if (perception.userBehavior.visitCount > 1) {
+        successMessage += ` (visit #${perception.userBehavior.visitCount})`;
+      }
+    }
+
     if (preCleaningResult.tokenUsage) {
       const usage = preCleaningResult.tokenUsage;
-      successMessage += ` | Tokens: ${usage.totalTokens.toLocaleString()}`;
+      successMessage += ` | ${usage.totalTokens.toLocaleString()} tokens`;
     }
 
     await notifyTab(tab.id, successMessage, 'success');
