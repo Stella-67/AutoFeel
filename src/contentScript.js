@@ -568,28 +568,55 @@ function detectFormFields() {
   const fields = [];
 
   // Find all text-based input fields
-  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea');
+  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input:not([type]), textarea, select');
 
-  console.log(`[AutoFeel] Found ${inputs.length} total input elements`);
+  console.log('='.repeat(80));
+  console.log('[AutoFeel Field Detection] 🔍 STARTING FIELD DETECTION');
+  console.log('='.repeat(80));
+  console.log(`[AutoFeel Field Detection] Found ${inputs.length} total input elements`);
+  console.log('');
 
   let validFieldIndex = 0; // Counter for valid (non-hidden) fields
 
   inputs.forEach((input, index) => {
+    console.log(`[AutoFeel Field Detection] --- Processing input ${index} ---`);
+    console.log('[AutoFeel Field Detection] Element:', input.tagName, input.type);
+    console.log('[AutoFeel Field Detection] ID:', input.id || '(none)');
+    console.log('[AutoFeel Field Detection] Name:', input.name || '(none)');
+    console.log('[AutoFeel Field Detection] Placeholder:', input.placeholder || '(none)');
+
     // Skip hidden or disabled fields
     if (input.offsetParent === null || input.disabled || input.readOnly) {
-      console.log(`[AutoFeel] Skipping field ${index}: hidden/disabled/readonly`);
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: hidden/disabled/readonly`);
+      console.log('');
       return;
     }
 
     // Try to find the label for this input
     let label = '';
     let placeholder = input.placeholder || '';
+    const debugMethods = [];
 
-    // Method 1: Find associated label element
-    if (input.id) {
+    // Method 0: Use aria-labelledby (for Google Forms and accessible forms)
+    if (!label && input.getAttribute('aria-labelledby')) {
+      const ariaLabelledBy = input.getAttribute('aria-labelledby');
+      const labelIds = ariaLabelledBy.split(/\s+/);
+      const labelTexts = labelIds
+        .map(id => document.getElementById(id)?.textContent?.trim())
+        .filter(text => text && text !== 'Your answer');
+
+      if (labelTexts.length > 0) {
+        label = labelTexts.join(' ');
+        debugMethods.push(`Method 0 (aria-labelledby="${ariaLabelledBy}"): "${label}"`);
+      }
+    }
+
+    // Method 1: Find associated label element by 'for' attribute
+    if (!label && input.id) {
       const labelElement = document.querySelector(`label[for="${input.id}"]`);
       if (labelElement) {
         label = labelElement.textContent.trim();
+        debugMethods.push(`Method 1 (label[for="${input.id}"]): "${label}"`);
       }
     }
 
@@ -597,27 +624,92 @@ function detectFormFields() {
     if (!label) {
       const parentLabel = input.closest('label');
       if (parentLabel) {
-        label = parentLabel.textContent.trim();
+        // Remove the input's own value from the label text
+        const clone = parentLabel.cloneNode(true);
+        Array.from(clone.querySelectorAll('input, textarea, select')).forEach(el => el.remove());
+        label = clone.textContent.trim();
+        debugMethods.push(`Method 2 (parent label): "${label}"`);
       }
     }
 
-    // Method 3: Look for nearby text
+    // Method 3: Look for nearby text (previous sibling)
     if (!label) {
-      // Check previous sibling
       let prev = input.previousElementSibling;
-      if (prev && prev.tagName.match(/^(LABEL|DIV|SPAN|P)$/)) {
+      if (prev && prev.tagName.match(/^(LABEL|DIV|SPAN|P|H1|H2|H3|H4|H5|H6)$/)) {
         label = prev.textContent.trim();
+        debugMethods.push(`Method 3 (prev sibling ${prev.tagName}): "${label}"`);
       }
     }
 
-    // Method 4: Use aria-label
+    // Method 4: Look for parent's previous sibling
+    if (!label) {
+      const parent = input.parentElement;
+      if (parent && parent.previousElementSibling) {
+        const prevParent = parent.previousElementSibling;
+        if (prevParent.tagName.match(/^(LABEL|DIV|SPAN|P|H1|H2|H3|H4|H5|H6)$/)) {
+          label = prevParent.textContent.trim();
+          debugMethods.push(`Method 4 (parent's prev sibling ${prevParent.tagName}): "${label}"`);
+        }
+      }
+    }
+
+    // Method 5: Use aria-label
     if (!label && input.getAttribute('aria-label')) {
       label = input.getAttribute('aria-label');
+      debugMethods.push(`Method 5 (aria-label): "${label}"`);
     }
 
-    // Method 5: Use name attribute
+    // Method 6: Use title attribute
+    if (!label && input.getAttribute('title')) {
+      label = input.getAttribute('title');
+      debugMethods.push(`Method 6 (title): "${label}"`);
+    }
+
+    // Method 7: Use name attribute as fallback
     if (!label && input.name) {
-      label = input.name.replace(/[_-]/g, ' ').trim();
+      label = input.name.replace(/[_-]/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+      debugMethods.push(`Method 7 (name attribute): "${label}"`);
+    }
+
+    console.log('[AutoFeel Field Detection] Label detection methods tried:');
+    if (debugMethods.length > 0) {
+      debugMethods.forEach(method => console.log('  ✓', method));
+    } else {
+      console.log('  ✗ No label found by any method');
+      console.log('');
+      console.log('[AutoFeel Field Detection] 🔍 HTML STRUCTURE DEBUG:');
+
+      // Show the input's parent hierarchy
+      let parent = input.parentElement;
+      let depth = 0;
+      console.log('  Parent hierarchy:');
+      while (parent && depth < 3) {
+        const parentInfo = {
+          tag: parent.tagName,
+          id: parent.id || '(none)',
+          class: parent.className || '(none)',
+          text: parent.textContent?.substring(0, 100).trim() || '(none)'
+        };
+        console.log(`    Level ${depth + 1}:`, parentInfo);
+        parent = parent.parentElement;
+        depth++;
+      }
+
+      // Show siblings
+      console.log('  Siblings:');
+      const siblings = Array.from(input.parentElement?.children || []);
+      siblings.forEach((sibling, idx) => {
+        if (sibling === input) {
+          console.log(`    [${idx}] >>> THIS INPUT <<<`);
+        } else {
+          console.log(`    [${idx}] ${sibling.tagName}:`, sibling.textContent?.substring(0, 50).trim() || '(empty)');
+        }
+      });
+
+      // Show the actual HTML around this input
+      console.log('  HTML snippet (parent element):');
+      const parentHTML = input.parentElement?.outerHTML.substring(0, 500) || '(none)';
+      console.log(`    ${parentHTML}...`);
     }
 
     // Use sequential numbering for valid fields only
@@ -628,19 +720,34 @@ function detectFormFields() {
       id: fieldId,
       label: label,
       placeholder: placeholder,
-      type: input.type || 'text',
+      type: input.type || input.tagName.toLowerCase(),
       value: input.value,
       name: input.name
     };
 
     fields.push(fieldInfo);
-    console.log(`[AutoFeel] Field ${validFieldIndex} (original index ${index}):`, fieldInfo);
+
+    console.log(`[AutoFeel Field Detection] ✅ FIELD ADDED as ${fieldId}`);
+    console.log(`[AutoFeel Field Detection] Final field info:`, {
+      label: label || '(empty)',
+      placeholder: placeholder || '(empty)',
+      type: fieldInfo.type,
+      name: input.name || '(empty)'
+    });
+    console.log('');
 
     validFieldIndex++; // Increment only for valid fields
   });
 
-  console.log(`[AutoFeel] Detected ${fields.length} form fields total`);
-  console.log('[AutoFeel] All fields:', JSON.stringify(fields, null, 2));
+  console.log('='.repeat(80));
+  console.log(`[AutoFeel Field Detection] ✅ DETECTION COMPLETE: ${fields.length} fields found`);
+  console.log('='.repeat(80));
+  console.log('[AutoFeel Field Detection] Summary:');
+  fields.forEach((field, index) => {
+    const question = field.label || field.placeholder || field.name || '(NO QUESTION FOUND!)';
+    console.log(`  ${field.id}: "${question}"`);
+  });
+  console.log('');
   return fields;
 }
 

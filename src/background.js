@@ -33,9 +33,30 @@ async function handleSendToLLM() {
       return;
     }
 
+    // Check if page is accessible
+    if (tab.url && (
+      tab.url.startsWith('chrome://') ||
+      tab.url.startsWith('about:') ||
+      tab.url.startsWith('edge://') ||
+      tab.url.startsWith('chrome-extension://') ||
+      tab.url.startsWith('file://')
+    )) {
+      console.error('[AutoFeel] Cannot run on special pages:', tab.url);
+      console.error('[AutoFeel] This extension only works on regular web pages (http:// or https://)');
+      return;
+    }
+
     await notifyTab(tab.id, 'Fetching page content...', 'loading');
 
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_PAGE_CONTENT' });
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_PAGE_CONTENT' });
+    } catch (error) {
+      console.error('[AutoFeel] Failed to communicate with content script:', error);
+      console.error('[AutoFeel] Please refresh the page (F5) and try again.');
+      console.error('[AutoFeel] If the problem persists, this page may not support content scripts.');
+      return;
+    }
 
     if (!response || !response.success) {
       await notifyTab(tab.id, 'Failed to get page content', 'error');
@@ -44,192 +65,219 @@ async function handleSendToLLM() {
 
     const rawContent = response.content;
 
-    // ==================== PERCEPTION: Observe Context ====================
-    console.log('[AutoFeel Agentic] Starting perception...');
+    // ==================== IMMEDIATE: Save raw content to buffer ====================
+    console.log('[AutoFeel] Step 1: Saving raw content to buffer for immediate use...');
 
-    await perceptionAgent.trackVisit(rawContent.metadata.url);
-    const perception = await perceptionAgent.observe(rawContent);
-
-    console.log('[AutoFeel Agentic] Perception complete:', {
-      pageType: `${perception.currentPage.pageType}/${perception.currentPage.pageSubtype}`,
-      confidence: perception.currentPage.confidence,
-      visitCount: perception.userBehavior.visitCount,
-      isRepeatedVisit: perception.userBehavior.isRepeatedVisit
-    });
-
-    rawContent.perception = perception;
-
-    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
-
-    if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
-      await notifyTab(tab.id, 'Please configure LLM API in extension settings', 'error');
-      return;
-    }
-
-    // === Text Cleaning Pipeline ===
-
-    // Step 1: LLM Pre-Cleaning
-    await notifyTab(tab.id, 'LLM Pre-Cleaning...', 'loading');
-    const preCleaningResult = await llmPreCleaning(rawContent, config);
-
-    if (!preCleaningResult.success) {
-      await notifyTab(tab.id, `Pre-cleaning failed: ${preCleaningResult.error}`, 'error');
-      return;
-    }
-
-    // Step 2: Post-LLM Cleanup
-    await notifyTab(tab.id, 'Post-LLM Cleanup...', 'loading');
-    const cleanupResult = postLLMCleanup(preCleaningResult.data);
-
-    // Step 3: Chunk Builder
-    await notifyTab(tab.id, 'Building Chunks...', 'loading');
-    const chunkResult = chunkBuilder(cleanupResult, preCleaningResult.data);
-
-    // Step 4: Build Memory-Ready Data
-    await notifyTab(tab.id, 'Finalizing...', 'loading');
-    const memoryReady = buildMemoryReadyData(
-      chunkResult.chunks,
-      rawContent,
-      preCleaningResult.data,
-      cleanupResult
-    );
-
-    // Step 5: Build Schemas
-    await notifyTab(tab.id, 'Building schemas...', 'loading');
-
-    const { docId, documentSchema } = buildDocumentSchema(
-      rawContent,
-      preCleaningResult.data,
-      memoryReady
-    );
-
-    let chunkSchemas = buildChunkSchemas(
-      docId,
-      chunkResult.chunks,
-      rawContent,
-      preCleaningResult.data
-    );
-
-    // Step 6: Generate Vector Embeddings (optional, only for OpenAI provider)
-    if (config.llmProvider === 'openai' || config.llmProvider === 'custom') {
-      await notifyTab(tab.id, 'Generating embeddings for semantic search...', 'loading');
-
-      try {
-        const chunksWithEmbeddings = await generateChunkEmbeddings(chunkSchemas, config);
-        chunkSchemas = chunksWithEmbeddings;
-        console.log('[AutoFeel] Generated embeddings for all chunks');
-      } catch (embError) {
-        console.warn('[AutoFeel] Failed to generate embeddings, continuing without:', embError);
-      }
-    } else {
-      console.log('[AutoFeel] Skipping embeddings (not supported for this provider)');
-    }
-
-    // Save for auto-fill
     await chrome.storage.local.set({
       savedContext: {
         pageContent: rawContent,
-        llmAnalysis: memoryReady.cleanText,
+        llmAnalysis: rawContent.text, // Use raw text initially
         timestamp: new Date().toISOString(),
-        sourceUrl: rawContent.metadata.url
+        sourceUrl: rawContent.metadata.url,
+        isProcessed: false // Mark as not yet processed
       }
     });
 
-    // ==================== REASONING: Analyze Situation & Decide ====================
-    await notifyTab(tab.id, 'Analyzing context...', 'loading');
+    await notifyTab(tab.id, `✅ Content saved to buffer! You can now use Alt+V to fill forms. Processing in background...`, 'success');
 
-    let saveResult = null;
-    try {
-      await memoryDB.init();
+    console.log('[AutoFeel] ✓ Raw content saved to buffer. Starting background processing...');
+    console.log('');
 
-      console.log('[AutoFeel] Searching for existing document...');
-      const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
+    // ==================== BACKGROUND PROCESSING ====================
+    // Continue processing asynchronously without blocking
+    (async () => {
+      try {
+        console.log('[AutoFeel Background] Starting background processing...');
 
-      const reasoningContext = {
-        hasExisting: !!existingDoc,
-        contentChanged: false,
-        similarity: 1.0
-      };
+        // ==================== PERCEPTION: Observe Context ====================
+        console.log('[AutoFeel Agentic] Starting perception...');
 
-      if (existingDoc) {
-        const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
-        reasoningContext.contentChanged = updateCheck.shouldUpdate;
-        reasoningContext.similarity = updateCheck.textSimilarity;
-      }
+        await perceptionAgent.trackVisit(rawContent.metadata.url);
+        const perception = await perceptionAgent.observe(rawContent);
 
-      // Let reasoning agent decide what to do
-      console.log('[AutoFeel Agentic] Starting reasoning...');
-      const agenticDecision = await reasoningAgent.reason(perception, reasoningContext);
+        console.log('[AutoFeel Agentic] Perception complete:', {
+          pageType: `${perception.currentPage.pageType}/${perception.currentPage.pageSubtype}`,
+          confidence: perception.currentPage.confidence,
+          visitCount: perception.userBehavior.visitCount,
+          isRepeatedVisit: perception.userBehavior.isRepeatedVisit
+        });
 
-      console.log('[AutoFeel Agentic] Reasoning complete:');
-      console.log(reasoningAgent.explainDecision(agenticDecision));
+        rawContent.perception = perception;
 
-      // ==================== ACTION: Execute Strategy ====================
-      console.log('[AutoFeel Agentic] Executing action...');
+        const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
 
-      await actionAgent.init(memoryDB);
+        if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
+          console.error('[AutoFeel Background] LLM API not configured, skipping processing');
+          return;
+        }
 
-      const actionData = {
-        documentSchema: documentSchema,
-        chunkSchemas: chunkSchemas
-      };
+        // === Text Cleaning Pipeline ===
 
-      await notifyTab(tab.id, 'Executing strategy...', 'loading');
+        // Step 1: LLM Pre-Cleaning
+        console.log('[AutoFeel Background] Step 2: LLM Pre-Cleaning...');
+        const preCleaningResult = await llmPreCleaning(rawContent, config);
 
-      saveResult = await actionAgent.execute(
-        agenticDecision,
-        actionData,
-        existingDoc
-      );
+        if (!preCleaningResult.success) {
+          console.error('[AutoFeel Background] Pre-cleaning failed:', preCleaningResult.error);
+          return;
+        }
 
-      console.log('[AutoFeel Agentic] Action executed:', saveResult);
-    } catch (dbError) {
-      console.error('[AutoFeel] Failed to save to database:', dbError);
-      await notifyTab(tab.id, `Warning: Failed to save to memory database: ${dbError.message}`, 'error');
-    }
+        // Step 2: Post-LLM Cleanup
+        console.log('[AutoFeel Background] Step 3: Post-LLM Cleanup...');
+        const cleanupResult = postLLMCleanup(preCleaningResult.data);
 
-    // Build success message
-    let successMessage = '';
+        // Step 3: Chunk Builder
+        console.log('[AutoFeel Background] Step 4: Building Chunks...');
+        const chunkResult = chunkBuilder(cleanupResult, preCleaningResult.data);
 
-    if (saveResult && saveResult.success) {
-      const pageTypeEmoji = {
-        'profile': '👤',
-        'document': '📑',
-        'form': '📋',
-        'content': '📄',
-        'social': '💬',
-        'utility': '⚙️',
-        'unknown': '📄'
-      };
+        // Step 4: Build Memory-Ready Data
+        console.log('[AutoFeel Background] Step 5: Finalizing...');
+        const memoryReady = buildMemoryReadyData(
+          chunkResult.chunks,
+          rawContent,
+          preCleaningResult.data,
+          cleanupResult
+        );
 
-      const emoji = pageTypeEmoji[perception.currentPage.pageType] || '📄';
+        // Step 5: Build Schemas
+        console.log('[AutoFeel Background] Step 6: Building schemas...');
 
-      switch (saveResult.action) {
-        case 'skipped':
-          successMessage = `⏭️ Skipped: ${saveResult.reason}`;
-          if (reasoningContext.similarity) {
-            successMessage += ` (${(reasoningContext.similarity * 100).toFixed(0)}% similar)`;
+        const { docId, documentSchema } = buildDocumentSchema(
+          rawContent,
+          preCleaningResult.data,
+          memoryReady
+        );
+
+        let chunkSchemas = buildChunkSchemas(
+          docId,
+          chunkResult.chunks,
+          rawContent,
+          preCleaningResult.data
+        );
+
+        // Step 6: Generate Vector Embeddings (optional, only for OpenAI provider)
+        if (config.llmProvider === 'openai' || config.llmProvider === 'custom') {
+          console.log('[AutoFeel Background] Step 7: Generating embeddings for semantic search...');
+
+          try {
+            const chunksWithEmbeddings = await generateChunkEmbeddings(chunkSchemas, config);
+            chunkSchemas = chunksWithEmbeddings;
+            console.log('[AutoFeel Background] ✓ Generated embeddings for all chunks');
+          } catch (embError) {
+            console.warn('[AutoFeel Background] Failed to generate embeddings, continuing without:', embError);
           }
-          break;
+        } else {
+          console.log('[AutoFeel Background] Skipping embeddings (not supported for this provider)');
+        }
 
-        case 'updated':
-          successMessage = `🔄 Updated: ${documentSchema.title.substring(0, 40)}... (v${saveResult.version}, ${saveResult.newChunkCount} chunks)`;
-          break;
+        // Update savedContext with processed data
+        console.log('[AutoFeel Background] Step 8: Updating buffer with processed data...');
+        await chrome.storage.local.set({
+          savedContext: {
+            pageContent: rawContent,
+            llmAnalysis: memoryReady.cleanText,
+            timestamp: new Date().toISOString(),
+            sourceUrl: rawContent.metadata.url,
+            isProcessed: true // Mark as processed
+          }
+        });
 
-        case 'created':
-        default:
-          successMessage = `${emoji} Saved: ${documentSchema.title.substring(0, 40)}... (${saveResult.chunkCount} chunks)`;
-          break;
+        // ==================== REASONING: Analyze Situation & Decide ====================
+        console.log('[AutoFeel Background] Step 9: Analyzing context...');
+
+        let saveResult = null;
+        try {
+          await memoryDB.init();
+
+          console.log('[AutoFeel Background] Searching for existing document...');
+          const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
+
+          const reasoningContext = {
+            hasExisting: !!existingDoc,
+            contentChanged: false,
+            similarity: 1.0
+          };
+
+          if (existingDoc) {
+            const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
+            reasoningContext.contentChanged = updateCheck.shouldUpdate;
+            reasoningContext.similarity = updateCheck.textSimilarity;
+          }
+
+          // Let reasoning agent decide what to do
+          console.log('[AutoFeel Agentic] Starting reasoning...');
+          const agenticDecision = await reasoningAgent.reason(perception, reasoningContext);
+
+          console.log('[AutoFeel Agentic] Reasoning complete:');
+          console.log(reasoningAgent.explainDecision(agenticDecision));
+
+          // ==================== ACTION: Execute Strategy ====================
+          console.log('[AutoFeel Agentic] Executing action...');
+
+          await actionAgent.init(memoryDB);
+
+          const actionData = {
+            documentSchema: documentSchema,
+            chunkSchemas: chunkSchemas
+          };
+
+          saveResult = await actionAgent.execute(
+            agenticDecision,
+            actionData,
+            existingDoc
+          );
+
+          console.log('[AutoFeel Agentic] Action executed:', saveResult);
+        } catch (dbError) {
+          console.error('[AutoFeel Background] Failed to save to database:', dbError);
+        }
+
+        // Build completion message
+        let completionMessage = '';
+
+        if (saveResult && saveResult.success) {
+          const pageTypeEmoji = {
+            'profile': '👤',
+            'document': '📑',
+            'form': '📋',
+            'content': '📄',
+            'social': '💬',
+            'utility': '⚙️',
+            'unknown': '📄'
+          };
+
+          const emoji = pageTypeEmoji[perception.currentPage.pageType] || '📄';
+
+          switch (saveResult.action) {
+            case 'skipped':
+              completionMessage = `Background processing complete. Already in memory.`;
+              break;
+
+            case 'updated':
+              completionMessage = `🔄 Background processing complete. Updated in memory (v${saveResult.version}, ${saveResult.newChunkCount} chunks)`;
+              break;
+
+            case 'created':
+            default:
+              completionMessage = `${emoji} Background processing complete. Saved to memory (${saveResult.chunkCount} chunks)`;
+              break;
+          }
+        } else {
+          completionMessage = '✅ Background processing complete';
+        }
+
+        if (preCleaningResult.tokenUsage) {
+          completionMessage += ` [${preCleaningResult.tokenUsage.totalTokens.toLocaleString()} tokens]`;
+        }
+
+        console.log('[AutoFeel Background] ✅ Background processing complete!');
+        await notifyTab(tab.id, completionMessage, 'success');
+
+      } catch (bgError) {
+        console.error('[AutoFeel Background] Error during background processing:', bgError);
+        await notifyTab(tab.id, `Background processing error: ${bgError.message}`, 'error');
       }
-    } else {
-      successMessage = '✅ Content processed';
-    }
-
-    if (preCleaningResult.tokenUsage) {
-      successMessage += ` [${preCleaningResult.tokenUsage.totalTokens.toLocaleString()} tokens]`;
-    }
-
-    await notifyTab(tab.id, successMessage, 'success');
+    })(); // Immediately invoke the async function
 
   } catch (error) {
     console.error('[AutoFeel] Error in handleSendToLLM:', error);
@@ -255,16 +303,38 @@ async function handleAutoFillForm() {
       return;
     }
 
+    // Check if page is accessible
+    if (tab.url && (
+      tab.url.startsWith('chrome://') ||
+      tab.url.startsWith('about:') ||
+      tab.url.startsWith('edge://') ||
+      tab.url.startsWith('chrome-extension://') ||
+      tab.url.startsWith('file://')
+    )) {
+      console.error('[AutoFeel] Cannot run on special pages:', tab.url);
+      console.error('[AutoFeel] This extension only works on regular web pages (http:// or https://)');
+      return;
+    }
+
     await notifyTab(tab.id, 'Detecting form fields...', 'loading');
 
     const { savedContext } = await chrome.storage.local.get(['savedContext']);
 
     if (!savedContext) {
-      await notifyTab(tab.id, 'No saved context found. Please use Alt+C first to analyze a page.', 'error');
+      console.error('[AutoFeel] No saved context found.');
+      console.error('[AutoFeel] Please use Alt+C first on a page with your information (e.g., resume, profile) to save it to memory.');
+      console.error('[AutoFeel] Then come back to this form and use Alt+V to auto-fill.');
       return;
     }
 
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORM_FIELDS' });
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORM_FIELDS' });
+    } catch (error) {
+      console.error('[AutoFeel] Failed to communicate with content script:', error);
+      console.error('[AutoFeel] Please refresh the page (F5) and try again.');
+      return;
+    }
 
     if (!response || !response.success) {
       await notifyTab(tab.id, 'Failed to detect form fields', 'error');
@@ -277,6 +347,20 @@ async function handleAutoFillForm() {
       await notifyTab(tab.id, 'No form fields found on this page', 'error');
       return;
     }
+
+    console.log('='.repeat(80));
+    console.log('[AutoFeel Debug] 🔍 OPTION+V AUTO-FILL STARTED');
+    console.log('='.repeat(80));
+    console.log(`[AutoFeel Debug] Step 1: Detected ${formFields.length} form fields:`);
+    formFields.forEach((field, index) => {
+      console.log(`  Field ${index}:`, {
+        label: field.label,
+        placeholder: field.placeholder,
+        type: field.type,
+        name: field.name
+      });
+    });
+    console.log('');
 
     await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
 
@@ -336,20 +420,26 @@ async function generateFormAnswers(formFields, savedContext, config) {
       `${field.label || ''} ${field.placeholder || ''}`
     ).filter(text => text.trim()).join(' ');
 
-    console.log('[AutoFeel RAG] Query text:', queryText);
+    console.log('[AutoFeel Debug] Step 2: RAG Retrieval');
+    console.log(`[AutoFeel Debug] Query text: "${queryText}"`);
+    console.log('');
 
     if (queryText && (llmProvider === 'openai' || llmProvider === 'custom')) {
       try {
         const queryEmbedding = await generateEmbedding(queryText, config);
 
         if (queryEmbedding) {
-          console.log('[AutoFeel RAG] Generated query embedding');
+          console.log('[AutoFeel Debug] ✓ Generated query embedding');
 
           await memoryDB.init();
           const searchResults = await memoryDB.semanticSearch(queryEmbedding, 5);
 
           if (searchResults && searchResults.length > 0) {
-            console.log(`[AutoFeel RAG] Found ${searchResults.length} relevant chunks`);
+            console.log(`[AutoFeel Debug] ✓ Found ${searchResults.length} relevant chunks from knowledge base:`);
+            searchResults.forEach((chunk, index) => {
+              console.log(`  Chunk ${index + 1}: ${(chunk.similarity * 100).toFixed(1)}% - "${chunk.source.title}"`);
+              console.log(`    Preview: ${chunk.text.substring(0, 100)}...`);
+            });
 
             retrievalStats = {
               totalChunks: searchResults.length,
@@ -363,67 +453,110 @@ Source: ${chunk.source.title}
 Content: ${chunk.text}`;
             }).join('\n\n');
 
-            console.log('[AutoFeel RAG] Retrieval stats:', retrievalStats);
+            console.log('[AutoFeel Debug] Retrieval stats:', retrievalStats);
+            console.log('');
+          } else {
+            console.log('[AutoFeel Debug] ⚠ No relevant chunks found in knowledge base');
+            console.log('');
           }
+        } else {
+          console.log('[AutoFeel Debug] ⚠ Failed to generate query embedding');
+          console.log('');
         }
       } catch (ragError) {
-        console.error('[AutoFeel RAG] Retrieval error:', ragError);
+        console.error('[AutoFeel Debug] ✗ RAG Retrieval error:', ragError);
+        console.log('');
       }
+    } else {
+      console.log('[AutoFeel Debug] ⚠ RAG skipped (provider does not support embeddings or no query text)');
+      console.log('');
     }
 
     // ==================== Build Enhanced Prompt with RAG ====================
-    const systemPrompt = `You are an AI assistant that helps fill out forms based on provided information.
-You will receive:
-1. Retrieved knowledge from the user's personal knowledge base (if available)
-2. Information from a previous page (the user's background, resume, or other context)
-3. A list of form fields with their questions/labels
+    const systemPrompt = `You are an intelligent form-filling assistant. Your task is to fill out form fields based on the user's information.
 
-Your task is to generate appropriate answers for each form field based on ALL the provided context.
-**Prioritize information from the retrieved knowledge base when available**, as it represents the user's curated information.
+IMPORTANT RULES:
+1. Read each form field question carefully
+2. Search the provided context for relevant information
+3. Make reasonable inferences and educated guesses based on the context
+4. If the context doesn't explicitly mention something but you can reasonably infer it, make that inference
+5. For questions asking about levels (low/medium/high) or ratings, analyze the context and choose the most appropriate level
+6. Keep answers concise and directly relevant to the question
+7. Only return an empty string "" if you have absolutely no basis to answer the question
+8. Return ONLY a valid JSON object with field IDs as keys
 
-Respond ONLY with a JSON object where keys are field IDs and values are the answers.
+Examples:
+- If asked "effort level" and context shows intensive 6-month research → answer "high"
+- If asked "experience level" and context shows beginner work → answer "low"
+- If asked "name" but no name in context → return ""
 
-Example response format:
+Response format:
 {
   "field_0": "answer for first field",
   "field_1": "answer for second field"
 }`;
 
-    let userPrompt = '';
+    // Build form fields description with clear questions
+    const fieldsDescription = formFields.map((field, index) => {
+      const question = field.label || field.placeholder || field.name || `Field ${index}`;
+      const fieldInfo = [
+        `Question: ${question}`,
+        field.type !== 'text' ? `Type: ${field.type}` : null
+      ].filter(Boolean).join(' | ');
 
+      return `field_${index}: ${fieldInfo}`;
+    }).join('\n');
+
+    let userPrompt = `I need to fill out a form. Here is my information and the form fields:\n\n`;
+
+    // Add context - prioritize RAG results if available
     if (retrievedContext) {
-      userPrompt += `=== RETRIEVED KNOWLEDGE FROM USER'S KNOWLEDGE BASE ===
-${retrievedContext}
-
-`;
+      userPrompt += `=== MY SAVED INFORMATION (Most Relevant) ===\n${retrievedContext}\n\n`;
     }
 
-    userPrompt += `=== CONTEXT FROM PREVIOUS PAGE ===
-${savedContext.pageContent.text}
+    // Add a concise version of the saved context (limit length)
+    const contextText = savedContext.llmAnalysis || savedContext.pageContent.text;
+    const truncatedContext = contextText.length > 2000
+      ? contextText.substring(0, 2000) + '...[truncated]'
+      : contextText;
 
-Previous LLM Analysis:
-${savedContext.llmAnalysis}
+    userPrompt += `=== ADDITIONAL CONTEXT ===\n${truncatedContext}\n\n`;
 
-`;
+    userPrompt += `=== FORM FIELDS TO FILL ===\n${fieldsDescription}\n\n`;
 
-    userPrompt += `=== FORM FIELDS TO FILL ===
-${formFields.map((field, index) =>
-  `Field ${index} (ID: field_${index}):
-  Label: ${field.label}
-  Placeholder: ${field.placeholder}
-  Type: ${field.type}
-  Current Value: ${field.value}
-`).join('\n')}
+    userPrompt += `Please fill out each field based on my information. Use the context above to make informed decisions:
+- Look for direct matches first
+- If no direct match, make reasonable inferences based on the context
+- For level/rating questions (low/medium/high), analyze the context and choose appropriately
+- Be intelligent and thoughtful, not overly literal
 
-Please generate appropriate answers for each field based on the context provided above.
-${retrievedContext ? '**Prioritize information from the retrieved knowledge base.**' : ''}
-Return ONLY a JSON object.`;
+Return ONLY the JSON object with answers.`;
+
+    console.log('[AutoFeel Debug] Step 3: Building LLM Prompt');
+    console.log('[AutoFeel Debug] System Prompt:');
+    console.log(systemPrompt);
+    console.log('');
+    console.log('[AutoFeel Debug] User Prompt:');
+    console.log(userPrompt);
+    console.log('');
+    console.log('[AutoFeel Debug] Prompt Stats:', {
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+      totalLength: systemPrompt.length + userPrompt.length,
+      hasRAGContext: !!retrievedContext,
+      temperature: 0.3
+    });
+    console.log('');
 
     const requestBody = buildLLMRequestBody(llmProvider, modelName, userPrompt, systemPrompt, {
       maxTokens: 2000,
-      temperature: 0.7
+      temperature: 0.3  // Lower temperature for more focused, factual responses
     });
     const headers = buildLLMHeaders(llmProvider, apiKey);
+
+    console.log('[AutoFeel Debug] Step 4: Calling LLM API...');
+    console.log(`[AutoFeel Debug] Provider: ${llmProvider}, Model: ${modelName}`);
+    console.log('');
 
     const response = await fetch(apiEndpoint, {
       method: 'POST',
@@ -447,19 +580,48 @@ Return ONLY a JSON object.`;
       await updateTokenUsage(llmProvider, tokenUsage);
     }
 
-    console.log('[AutoFeel] LLM raw response:', content);
+    console.log('[AutoFeel Debug] Step 5: LLM Response Received');
+    console.log('[AutoFeel Debug] Raw LLM response:');
+    console.log(content);
+    console.log('');
+    if (tokenUsage) {
+      console.log('[AutoFeel Debug] Token usage:', tokenUsage);
+      console.log('');
+    }
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error('[AutoFeel] No JSON found in LLM response');
+      console.error('[AutoFeel Debug] ✗ No JSON found in LLM response!');
+      console.error('[AutoFeel Debug] This usually means the LLM did not follow instructions.');
+      console.log('');
       return {
         success: false,
         error: 'LLM did not return valid JSON'
       };
     }
 
+    console.log('[AutoFeel Debug] Step 6: Parsing Answers');
+    console.log('[AutoFeel Debug] Extracted JSON:');
+    console.log(jsonMatch[0]);
+    console.log('');
+
     const answers = JSON.parse(jsonMatch[0]);
-    console.log('[AutoFeel] Parsed answers:', JSON.stringify(answers, null, 2));
+    console.log('[AutoFeel Debug] ✓ Parsed answers successfully:');
+    console.log(JSON.stringify(answers, null, 2));
+    console.log('');
+
+    console.log('[AutoFeel Debug] Field Mapping:');
+    Object.keys(answers).forEach(fieldId => {
+      const fieldIndex = parseInt(fieldId.replace('field_', ''));
+      const field = formFields[fieldIndex];
+      if (field) {
+        console.log(`  ${fieldId} (${field.label || field.placeholder}): "${answers[fieldId]}"`);
+      }
+    });
+    console.log('');
+    console.log('='.repeat(80));
+    console.log('[AutoFeel Debug] ✅ AUTO-FILL COMPLETE');
+    console.log('='.repeat(80));
 
     return {
       success: true,
