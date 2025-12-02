@@ -743,7 +743,7 @@ function detectFormFields() {
   console.log(`[AutoFeel Field Detection] ✅ DETECTION COMPLETE: ${fields.length} fields found`);
   console.log('='.repeat(80));
   console.log('[AutoFeel Field Detection] Summary:');
-  fields.forEach((field, index) => {
+  fields.forEach((field) => {
     const question = field.label || field.placeholder || field.name || '(NO QUESTION FOUND!)';
     console.log(`  ${field.id}: "${question}"`);
   });
@@ -792,10 +792,10 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
 
   hint.style.cssText = `
     margin-top: 24px;
-    margin-left: ${inputMarginLeft};
+    margin-left: calc(${inputMarginLeft} - 3px);
     min-width: 500px;
     max-width: 800px;
-    padding: 2px 8px;
+    padding: 2px 7px;
     background-color: #fff3cd;
     border: 1px solid #ffc107;
     border-radius: 4px;
@@ -997,7 +997,7 @@ async function fillFormFields(answers) {
   console.log('='.repeat(80));
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'GET_PAGE_CONTENT') {
     // Handle async getPageContent
     getPageContent()

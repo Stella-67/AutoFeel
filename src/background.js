@@ -111,21 +111,6 @@ async function handleSendToLLM() {
       try {
         console.log('[AutoFeel Background] Starting background processing...');
 
-        // ==================== PERCEPTION: Observe Context ====================
-        console.log('[AutoFeel Agentic] Starting perception...');
-
-        await perceptionAgent.trackVisit(rawContent.metadata.url);
-        const perception = await perceptionAgent.observe(rawContent);
-
-        console.log('[AutoFeel Agentic] Perception complete:', {
-          pageType: `${perception.currentPage.pageType}/${perception.currentPage.pageSubtype}`,
-          confidence: perception.currentPage.confidence,
-          visitCount: perception.userBehavior.visitCount,
-          isRepeatedVisit: perception.userBehavior.isRepeatedVisit
-        });
-
-        rawContent.perception = perception;
-
         const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
 
         if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
@@ -204,8 +189,8 @@ async function handleSendToLLM() {
           }
         });
 
-        // ==================== REASONING: Analyze Situation & Decide ====================
-        console.log('[AutoFeel Background] Step 9: Analyzing context...');
+        // ==================== SAVE TO DATABASE ====================
+        console.log('[AutoFeel Background] Step 9: Saving to database...');
 
         let saveResult = null;
         try {
@@ -214,44 +199,31 @@ async function handleSendToLLM() {
           console.log('[AutoFeel Background] Searching for existing document...');
           const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
 
-          const reasoningContext = {
-            hasExisting: !!existingDoc,
-            contentChanged: false,
-            similarity: 1.0
-          };
-
           if (existingDoc) {
+            console.log('[AutoFeel Background] Document exists, checking if update needed...');
             const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
-            reasoningContext.contentChanged = updateCheck.shouldUpdate;
-            reasoningContext.similarity = updateCheck.textSimilarity;
+
+            if (updateCheck.shouldUpdate) {
+              console.log(`[AutoFeel Background] Content changed (similarity: ${(updateCheck.textSimilarity * 100).toFixed(1)}%), updating...`);
+              await memoryDB.deleteDocument(existingDoc.id);
+              await memoryDB.saveDocument(documentSchema);
+              await memoryDB.saveChunks(chunkSchemas);
+              saveResult = { success: true, action: 'updated', reason: 'Content changed' };
+            } else {
+              console.log(`[AutoFeel Background] Content similar (${(updateCheck.textSimilarity * 100).toFixed(1)}%), skipping save`);
+              saveResult = { success: true, action: 'skipped', reason: 'Content too similar to existing' };
+            }
+          } else {
+            console.log('[AutoFeel Background] New document, saving...');
+            await memoryDB.saveDocument(documentSchema);
+            await memoryDB.saveChunks(chunkSchemas);
+            saveResult = { success: true, action: 'created', reason: 'New document' };
           }
 
-          // Let reasoning agent decide what to do
-          console.log('[AutoFeel Agentic] Starting reasoning...');
-          const agenticDecision = await reasoningAgent.reason(perception, reasoningContext);
-
-          console.log('[AutoFeel Agentic] Reasoning complete:');
-          console.log(reasoningAgent.explainDecision(agenticDecision));
-
-          // ==================== ACTION: Execute Strategy ====================
-          console.log('[AutoFeel Agentic] Executing action...');
-
-          await actionAgent.init(memoryDB);
-
-          const actionData = {
-            documentSchema: documentSchema,
-            chunkSchemas: chunkSchemas
-          };
-
-          saveResult = await actionAgent.execute(
-            agenticDecision,
-            actionData,
-            existingDoc
-          );
-
-          console.log('[AutoFeel Agentic] Action executed:', saveResult);
+          console.log('[AutoFeel Background] Save completed:', saveResult);
         } catch (dbError) {
           console.error('[AutoFeel Background] Failed to save to database:', dbError);
+          saveResult = { success: false, error: dbError.message };
         }
 
         // Build completion message
