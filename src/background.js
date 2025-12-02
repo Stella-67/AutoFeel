@@ -339,6 +339,9 @@ async function handleAutoFillForm() {
     });
     console.log('');
 
+    // Clear filled field tracking (start fresh)
+    await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_FILLED_FIELDS' });
+
     await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
 
     const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
@@ -349,77 +352,89 @@ async function handleAutoFillForm() {
     }
 
     // Generate and fill answers one by one
-    // Strategy: Always re-detect all unprocessed fields after each fill
-    // This handles fields appearing/disappearing/reordering dynamically
+    // Strategy: Fill one field, re-detect remaining unfilled fields, repeat
     let totalTokens = 0;
-    let successCount = 0;
-    const processedFieldIds = new Set(); // Track processed fields by ID
-
-    let currentFields = formFields; // Start with initial detection
+    let filledCount = 0;
     let iterationCount = 0;
     const MAX_ITERATIONS = 100; // Safety limit to prevent infinite loops
 
-    while (currentFields.length > 0 && iterationCount < MAX_ITERATIONS) {
+    let remainingFields = formFields; // Start with initial detection
+
+    while (remainingFields.length > 0 && iterationCount < MAX_ITERATIONS) {
       iterationCount++;
 
-      // Always process the first unprocessed field in current DOM order
-      const field = currentFields[0];
+      // Process the first unfilled field
+      const field = remainingFields[0];
+      const totalCurrent = filledCount + remainingFields.length;
 
       // Show progress notification
-      await notifyTab(tab.id, `Generating answer ${processedFieldIds.size + 1}/${processedFieldIds.size + currentFields.length}...`, 'loading');
+      await notifyTab(tab.id, `Filling field ${filledCount + 1}/${totalCurrent}...`, 'loading');
 
       const answer = await generateSingleFieldAnswer(field, savedContext, config);
+      console.log(`[AutoFeel] 🎯 answer.success = ${answer.success}, answer.data =`, answer.data);
 
       // Fill the field (or show hint if empty)
       if (answer.success) {
-        await chrome.tabs.sendMessage(tab.id, {
+        // CRITICAL: Mark as filled FIRST to prevent re-detection
+        console.log(`[AutoFeel] 📤📤📤 SENDING MARK_AS_FILLED for ${field.id} (${field.label}) 📤📤📤`);
+        try {
+          const markResult = await chrome.tabs.sendMessage(tab.id, {
+            type: 'MARK_AS_FILLED',
+            fieldId: field.id,
+            fieldLabel: field.label  // Pass label to track filled fields
+          });
+          console.log(`[AutoFeel] ✓ MARK_AS_FILLED result:`, markResult);
+        } catch (markError) {
+          console.error(`[AutoFeel] ❌ MARK_AS_FILLED failed:`, markError);
+        }
+
+        // Then try to fill
+        const fillResult = await chrome.tabs.sendMessage(tab.id, {
           type: 'FILL_SINGLE_FIELD',
           fieldId: field.id,
           answer: answer.data
         });
 
+        if (fillResult && fillResult.success) {
+          filledCount++;
+        }
+
         if (answer.tokenUsage) {
           totalTokens += answer.tokenUsage.totalTokens;
         }
-
-        successCount++;
       } else {
         console.error(`[AutoFeel] Failed to generate answer for ${field.id}:`, answer.error);
       }
 
-      // Always mark as processed (whether filled or not)
-      processedFieldIds.add(field.id);
-
-      // Wait for page to update (fields may appear/disappear/reorder)
+      // Wait for page to update (fields may appear/disappear dynamically)
       await new Promise(resolve => setTimeout(resolve, 600));
 
-      // Always re-detect ALL unprocessed fields
-      // This handles any dynamic changes: new fields, disappeared fields, reordered fields
+      // Re-detect all remaining unfilled fields
       try {
         const detectionResult = await chrome.tabs.sendMessage(tab.id, {
           type: 'DETECT_FORM_FIELDS',
-          excludeFieldIds: Array.from(processedFieldIds)
+          onlyUnfilled: true  // Only detect fields not yet filled
         });
 
         if (detectionResult && detectionResult.success && detectionResult.fields) {
-          const oldCount = currentFields.length;
+          const oldCount = remainingFields.length;
           const newCount = detectionResult.fields.length;
 
-          currentFields = detectionResult.fields; // Replace entire queue
+          remainingFields = detectionResult.fields;
 
           if (newCount !== oldCount - 1) {
             // Expected: oldCount - 1 (we just processed one)
-            // If different, fields were added or removed
+            // If different, fields were added or removed dynamically
             const delta = newCount - (oldCount - 1);
-            console.log(`[AutoFeel] 🔄 Fields changed: ${oldCount} → ${newCount} (${delta > 0 ? '+' : ''}${delta})`);
+            console.log(`[AutoFeel] 🔄 Remaining fields changed: ${oldCount} → ${newCount} (${delta > 0 ? '+' : ''}${delta})`);
           }
         } else {
-          // No more fields detected
-          currentFields = [];
+          // No more unfilled fields detected
+          remainingFields = [];
         }
       } catch (detectError) {
         console.log('[AutoFeel] Re-detection failed:', detectError.message);
-        currentFields = [];
+        remainingFields = [];
       }
     }
 
@@ -427,8 +442,7 @@ async function handleAutoFillForm() {
       console.warn('[AutoFeel] ⚠️ Reached maximum iteration limit. Stopping to prevent infinite loop.');
     }
 
-    const totalFields = processedFieldIds.size;
-    await notifyTab(tab.id, `✅ Successfully filled ${successCount}/${totalFields} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
+    await notifyTab(tab.id, `✅ Successfully filled ${filledCount} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
   } catch (error) {
     console.error('[AutoFeel] Error in handleAutoFillForm:', error);
     try {
@@ -534,13 +548,21 @@ Content: ${chunk.text}`;
     }
 
     // ==================== Build Prompt for Single Field ====================
-    const systemPrompt = `You are a form-filling assistant. Answer the given form field question based on the user's information.
+    const systemPrompt = `You are an intelligent form-filling assistant. Your task is to understand the question, analyze the user's information, and use logical reasoning to provide the most appropriate answer.
+
+IMPORTANT: Do not simply match keywords. Instead:
+1. Understand what the question is really asking
+2. Analyze the context and user's information
+3. Use logical reasoning to determine the best answer
+4. Consider implications and related information
 
 Return a JSON object with "answer" and "explanation":
 {
   "answer": "your answer here",
   "explanation": null
 }
+
+CRITICAL: If the question has numbered options (1, 2, 3...), you MUST return ONLY the number in the "answer" field, NOT the option text.
 
 If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
@@ -564,19 +586,26 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
     userPrompt += `=== QUESTION ===\n${queryText}\n\n`;
 
     // If field has options (radio/select), include them
+    console.log('[AutoFeel Debug] Building prompt - field has options?', !!field.options, 'Count:', field.options?.length || 0);
     if (field.options && field.options.length > 0) {
       userPrompt += `=== AVAILABLE OPTIONS ===\n`;
       field.options.forEach((option, index) => {
         userPrompt += `${index + 1}. ${option.label}\n`;
       });
-      userPrompt += `\nPlease choose ONE option from the list above.\nYou can return either:\n- Just the number (e.g., "3")\n- Or the exact label text (e.g., "United States")\n\n`;
+      userPrompt += `\n`;
+      userPrompt += `CRITICAL REQUIREMENT:\n`;
+      userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
+      userPrompt += `- NEVER return text, NEVER return the option label\n`;
+      userPrompt += `- ONLY return the number (e.g., "3")\n`;
+      userPrompt += `- Use reasoning to pick the BEST matching option\n`;
+      userPrompt += `- If no option fits, return "" (empty string)\n\n`;
     } else {
       userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
     }
 
     const requestBody = buildLLMRequestBody(llmProvider, modelName, userPrompt, systemPrompt, {
       maxTokens: 500,
-      temperature: 0.3
+      temperature: 0.1  // Low temperature for rule-following while allowing slight reasoning flexibility
     });
     const headers = buildLLMHeaders(llmProvider, apiKey);
 
@@ -617,7 +646,49 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     const result = JSON.parse(jsonMatch[0]);
     console.log('[AutoFeel Debug] Parsed result:', result);
-    console.log('[AutoFeel Debug] ✅ Answer:', result.answer || '(empty)');
+
+    // ==================== Validate and Fix Option Fields ====================
+    console.log('[AutoFeel Debug] Field has options?', !!field.options, 'Count:', field.options?.length || 0);
+
+    // If this is an option field (select/radio), ensure answer is a valid number
+    if (field.options && field.options.length > 0 && result.answer) {
+      const answerStr = String(result.answer).trim();
+      const answerNum = parseInt(answerStr);
+
+      // Check if answer is a valid option number
+      const isValidNumber = !isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length;
+
+      if (!isValidNumber) {
+        // LLM returned text instead of number - try to fix it
+        console.warn('[AutoFeel Debug] ⚠️ LLM returned text instead of number:', answerStr);
+        console.warn('[AutoFeel Debug] Attempting to convert to option number...');
+
+        const answerLower = answerStr.toLowerCase();
+        let matchedIndex = -1;
+
+        // Try to find matching option
+        for (let i = 0; i < field.options.length; i++) {
+          const optionLabel = field.options[i].label.toLowerCase();
+          if (optionLabel === answerLower || optionLabel.includes(answerLower)) {
+            matchedIndex = i + 1; // Convert to 1-based
+            break;
+          }
+        }
+
+        if (matchedIndex > 0) {
+          console.warn(`[AutoFeel Debug] ✓ Converted "${answerStr}" to option ${matchedIndex}: "${field.options[matchedIndex - 1].label}"`);
+          result.answer = String(matchedIndex);
+        } else {
+          console.error(`[AutoFeel Debug] ❌ Could not convert "${answerStr}" to valid option number`);
+          console.error('[AutoFeel Debug] Available options:', field.options.map((o, i) => `${i+1}. ${o.label}`).join(', '));
+          // Keep original answer, let contentScript handle the fallback
+        }
+      } else {
+        console.log('[AutoFeel Debug] ✅ Valid option number:', answerNum);
+      }
+    }
+
+    console.log('[AutoFeel Debug] ✅ Final Answer:', result.answer || '(empty)');
     if (result.explanation) {
       console.log('[AutoFeel Debug] 💡 Explanation:', result.explanation);
     }

@@ -1,3 +1,6 @@
+// Track filled fields by label (survives DOM recreation)
+const filledFieldLabels = new Set();
+
 function getVisibleText() {
   // Special handling for different platforms
   const hostname = window.location.hostname;
@@ -564,10 +567,12 @@ function htmlToMarkdown(element) {
   return markdown.trim();
 }
 
-function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
+function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfilled = false) {
   const fields = [];
   const processedRadioGroups = new Set(); // Track processed radio groups
   const excludeSet = new Set(excludeFieldIds); // Convert to Set for fast lookup
+
+  console.log('[AutoFeel Field Detection] Mode:', onlyUnfilled ? 'Only unfilled fields' : 'All fields');
 
   // Find all form fields (text inputs, textareas, selects, checkboxes, radios, button-based selects)
   let inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input[type="checkbox"], input[type="radio"], input:not([type]), textarea, select, button[aria-haspopup="listbox"], button[aria-haspopup="true"]'));
@@ -623,6 +628,13 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
     // Skip hidden or disabled fields
     if (input.offsetParent === null || input.disabled || input.readOnly) {
       console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: hidden/disabled/readonly`);
+      console.log('');
+      return;
+    }
+
+    // Skip already filled fields (if onlyUnfilled mode)
+    if (onlyUnfilled && input.dataset.autofeelFilled === 'true') {
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: already filled`);
       console.log('');
       return;
     }
@@ -855,6 +867,13 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
       name: input.name
     };
 
+    // CRITICAL: Skip fields already filled (check by label, survives DOM recreation)
+    if (onlyUnfilled && label && filledFieldLabels.has(label)) {
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: "${label}" already filled (by label tracking)`);
+      console.log('');
+      return;
+    }
+
     // For radio buttons, collect all options in the group
     if (input.type === 'radio' && input.name) {
       const radioGroup = document.querySelectorAll(`input[type="radio"][name="${input.name}"]`);
@@ -885,6 +904,35 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
       if (options.length > 0) {
         fieldInfo.options = options;
         console.log(`[AutoFeel Field Detection] 📋 Select has ${options.length} options:`, options.map(o => o.label).join(', '));
+      }
+    }
+
+    // For searchable select (Workday-style), try to extract options
+    const isSearchableSelect =
+      input.dataset.uxiWidgetType === 'selectinput' ||
+      (input.getAttribute('placeholder') === 'Search' && input.getAttribute('autocomplete') === 'off');
+
+    if (isSearchableSelect) {
+      console.log('[AutoFeel Field Detection] 🔍 Detected searchable select, attempting to extract options...');
+
+      // Check if options are already visible (previously opened)
+      let optionElements = Array.from(document.querySelectorAll('[data-automation-id="promptOption"]'));
+
+      if (optionElements.length > 0) {
+        const options = optionElements
+          .map(opt => ({
+            label: opt.textContent.trim(),
+            value: opt.getAttribute('data-automation-label') || opt.textContent.trim()
+          }))
+          .filter(opt => opt.label.length > 0);
+
+        if (options.length > 0) {
+          fieldInfo.options = options;
+          console.log(`[AutoFeel Field Detection] 📋 Searchable select has ${options.length} visible options:`, options.map(o => o.label).join(', '));
+        }
+      } else {
+        console.log('[AutoFeel Field Detection] ⚠️ No visible options found for searchable select (may need to click to expand)');
+        console.log('[AutoFeel Field Detection] Note: This field will be treated as text input without option constraints');
       }
     }
 
@@ -934,18 +982,33 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
 }
 
 async function fillSingleField(fieldId, fieldData) {
-  console.log(`[AutoFeel] Filling single field: ${fieldId}`);
+  console.log(`[AutoFeel] 🚀🚀🚀 fillSingleField CALLED for ${fieldId} 🚀🚀🚀`);
+  console.log(`[AutoFeel] fieldData:`, fieldData);
 
   const input = document.querySelector(`[data-autofeel-id="${fieldId}"]`);
 
   if (!input) {
-    console.warn(`[AutoFeel] Field ${fieldId} not found in DOM`);
+    console.warn(`[AutoFeel] ❌ Field ${fieldId} not found in DOM`);
     return;
   }
+
+  console.log(`[AutoFeel] ✓ Found input element:`, input.tagName, input.type);
 
   // Extract answer and explanation
   const answer = typeof fieldData === 'string' ? fieldData : fieldData.answer;
   const explanation = typeof fieldData === 'object' ? fieldData.explanation : null;
+
+  // Get field type info first
+  const fieldType = input.tagName.toLowerCase();
+  const inputType = input.type ? input.type.toLowerCase() : '';
+
+  // Mark field as filled IMMEDIATELY to prevent re-detection
+  input.dataset.autofeelFilled = 'true';
+  if (inputType === 'radio' && input.name) {
+    const radioGroup = document.querySelectorAll(`input[type="radio"][name="${input.name}"]`);
+    radioGroup.forEach(radio => radio.dataset.autofeelFilled = 'true');
+  }
+  console.log(`[AutoFeel] ✅ Marked field ${fieldId} as filled (before filling)`);
 
   // Handle empty answers with hint
   if (!answer || answer.trim() === '') {
@@ -954,8 +1017,6 @@ async function fillSingleField(fieldId, fieldData) {
   }
 
   // Fill based on field type
-  const fieldType = input.tagName.toLowerCase();
-  const inputType = input.type ? input.type.toLowerCase() : '';
 
   // Check if this is a custom searchable select (Workday-style)
   const isSearchableSelect =
@@ -1008,7 +1069,7 @@ async function showEmptyFieldHint(input, fieldId, explanation) {
 
   hint.style.cssText = `
     margin-top: 24px;
-    margin-left: calc(${inputMarginLeft} - 3px);
+    margin-left: calc(${inputMarginLeft} - 0px);
     min-width: 500px;
     max-width: 800px;
     padding: 2px 7px;
@@ -1346,34 +1407,45 @@ async function fillSelectField(select, answer) {
   const answerLower = answerTrimmed.toLowerCase();
 
   let matchedOption = null;
+  let matchMethod = '';
 
-  // 1. Check if answer is a number (option index)
+  // Priority 1: Check if answer is a number (option index) - THIS SHOULD BE THE PRIMARY METHOD
   const answerNum = parseInt(answerTrimmed);
   if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= options.length) {
     matchedOption = options[answerNum - 1]; // Convert 1-based to 0-based index
-    console.log(`[AutoFeel] ✓ Matched by number: option ${answerNum}`);
+    matchMethod = `index ${answerNum}`;
+    console.log(`[AutoFeel] ✓ Matched by ${matchMethod}: "${matchedOption.text}"`);
   }
 
-  // 2. Try exact text match
+  // Priority 2: Try exact text match (fallback for old data or manual input)
   if (!matchedOption) {
     matchedOption = options.find(opt => opt.text.toLowerCase().trim() === answerLower);
+    if (matchedOption) {
+      matchMethod = 'exact text match';
+      console.log(`[AutoFeel] ✓ Matched by ${matchMethod}: "${matchedOption.text}"`);
+    }
   }
 
-  // 3. Try partial match
+  // Priority 3: Try partial match (fallback for fuzzy matching)
   if (!matchedOption) {
     matchedOption = options.find(opt =>
       opt.text.toLowerCase().includes(answerLower) ||
       answerLower.includes(opt.text.toLowerCase().trim())
     );
+    if (matchedOption) {
+      matchMethod = 'partial text match';
+      console.log(`[AutoFeel] ⚠️ Matched by ${matchMethod}: "${matchedOption.text}" (LLM should return index instead)`);
+    }
   }
 
   if (matchedOption) {
     select.value = matchedOption.value;
     select.dispatchEvent(new Event('change', { bubbles: true }));
     select.dispatchEvent(new Event('input', { bubbles: true }));
-    console.log(`[AutoFeel] ✓ Selected option: "${matchedOption.text}"`);
+    console.log(`[AutoFeel] ✓ Selected option value: "${matchedOption.value}"`);
   } else {
     console.warn(`[AutoFeel] ⚠️ No matching option found for: "${answer}"`);
+    console.warn(`[AutoFeel] Available options (${options.length}):`, options.map((o, i) => `${i+1}. ${o.text}`).join(', '));
   }
 
   await new Promise(resolve => setTimeout(resolve, 400));
@@ -1425,30 +1497,45 @@ async function fillRadioField(radio, answer) {
   const answerTrimmed = answer.trim();
   const answerLower = answerTrimmed.toLowerCase();
   let matchedRadio = null;
+  let matchMethod = '';
 
-  // 1. Check if answer is a number (option index)
+  // Priority 1: Check if answer is a number (option index) - THIS SHOULD BE THE PRIMARY METHOD
   const answerNum = parseInt(answerTrimmed);
   if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= radioGroup.length) {
     matchedRadio = radioGroup[answerNum - 1]; // Convert 1-based to 0-based index
-    console.log(`[AutoFeel] ✓ Matched radio by number: option ${answerNum}`);
+    const label = findLabelForInput(matchedRadio);
+    matchMethod = `index ${answerNum}`;
+    console.log(`[AutoFeel] ✓ Matched radio by ${matchMethod}: "${label || matchedRadio.value}"`);
   }
 
-  // 2. Try to find matching radio by label text
+  // Priority 2: Try to find matching radio by label text (fallback)
   if (!matchedRadio) {
     for (const r of radioGroup) {
       const label = findLabelForInput(r);
       if (label && label.toLowerCase().includes(answerLower)) {
         matchedRadio = r;
+        matchMethod = 'label text match';
+        console.log(`[AutoFeel] ⚠️ Matched radio by ${matchMethod}: "${label}" (LLM should return index instead)`);
         break;
       }
     }
   }
 
-  // 3. If no match by label, try by value
+  // Priority 3: If no match by label, try by value (fallback)
   if (!matchedRadio) {
     matchedRadio = Array.from(radioGroup).find(r =>
       r.value.toLowerCase() === answerLower
     );
+    if (matchedRadio) {
+      matchMethod = 'value match';
+      console.log(`[AutoFeel] ⚠️ Matched radio by ${matchMethod}: "${matchedRadio.value}" (LLM should return index instead)`);
+    }
+  }
+
+  if (!matchedRadio) {
+    console.warn(`[AutoFeel] ⚠️ No matching radio found for: "${answer}"`);
+    console.warn(`[AutoFeel] Available radio options (${radioGroup.length}):`,
+      Array.from(radioGroup).map((r, i) => `${i+1}. ${findLabelForInput(r) || r.value}`).join(', '));
   }
 
   if (matchedRadio) {
@@ -1627,9 +1714,10 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   if (request.type === 'DETECT_FORM_FIELDS') {
     try {
+      const onlyUnfilled = request.onlyUnfilled || false;
       const excludeFieldIds = request.excludeFieldIds || [];
       const afterFieldId = request.afterFieldId || null;
-      const fields = detectFormFields(excludeFieldIds, afterFieldId);
+      const fields = detectFormFields(excludeFieldIds, afterFieldId, onlyUnfilled);
       sendResponse({ success: true, fields: fields });
     } catch (error) {
       sendResponse({ success: false, error: error.message });
@@ -1649,6 +1737,39 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       }
     })();
     return true; // Keep message channel open for async response
+  }
+
+  if (request.type === 'CLEAR_FILLED_FIELDS') {
+    // Clear filled field tracking (start fresh)
+    filledFieldLabels.clear();
+    console.log('[AutoFeel] 🗑️ Cleared filled field tracking');
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (request.type === 'MARK_AS_FILLED') {
+    // Mark field as filled to prevent re-detection
+    const input = document.querySelector(`[data-autofeel-id="${request.fieldId}"]`);
+    if (input) {
+      input.dataset.autofeelFilled = 'true';
+      const inputType = input.type ? input.type.toLowerCase() : '';
+
+      // For radio buttons, mark entire group
+      if (inputType === 'radio' && input.name) {
+        const radioGroup = document.querySelectorAll(`input[type="radio"][name="${input.name}"]`);
+        radioGroup.forEach(radio => radio.dataset.autofeelFilled = 'true');
+      }
+
+      // CRITICAL: Also track by label (survives DOM recreation)
+      if (request.fieldLabel) {
+        filledFieldLabels.add(request.fieldLabel);
+        console.log(`[AutoFeel] ✅✅✅ MARKED "${request.fieldLabel}" AS FILLED (label tracked) ✅✅✅`);
+      } else {
+        console.log(`[AutoFeel] ✅✅✅ MARKED ${request.fieldId} AS FILLED ✅✅✅`);
+      }
+    }
+    sendResponse({ success: true });
+    return true;
   }
 
   if (request.type === 'FILL_SINGLE_FIELD') {
