@@ -34,7 +34,10 @@
 
     <div class="section" id="model-section" style="display: none;">
       <label for="model-name">Model Name:</label>
-      <input type="text" id="model-name" placeholder="e.g. gpt-4, claude-3-sonnet">
+      <select id="model-name">
+        <option value="">-- Select Model --</option>
+      </select>
+      <input type="text" id="custom-model-name" placeholder="Enter custom model name" style="display: none; margin-top: 8px;">
     </div>
 
     <div class="section" id="prompt-section" style="display: none;">

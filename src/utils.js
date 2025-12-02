@@ -1,136 +1,155 @@
-// ==================== AutoFeel Utility Functions ====================
-// Shared utilities to avoid code duplication across modules
+// ==================== Utility Functions ====================
+// Common helper functions used across the extension
 
-const Utils = {
-  /**
-   * Escape HTML to prevent XSS
-   */
-  escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  },
+/**
+ * Send notification message to content script
+ * @param {number} tabId - Tab ID to send notification to
+ * @param {string} message - Message text
+ * @param {string} status - Status: 'loading', 'success', 'error'
+ */
+async function notifyTab(tabId, message, status) {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'SHOW_NOTIFICATION',
+      message: message,
+      status: status
+    });
+  } catch (error) {
+    console.error('[AutoFeel Utils] Failed to send notification:', error);
+  }
+}
 
-  /**
-   * Capitalize first letter of a string
-   */
-  capitalize(str) {
-    if (!str) return '';
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  },
+/**
+ * Generate UUID
+ * @returns {string} UUID string
+ */
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
-  /**
-   * Format date to locale string
-   */
-  formatDate(date) {
-    if (!date) return 'N/A';
-    return new Date(date).toLocaleDateString();
-  },
+/**
+ * Detect language from text (simple heuristic)
+ * @param {string} text - Text to detect language from
+ * @returns {string} Language code ('zh', 'ja', 'ko', 'en')
+ */
+function detectLanguage(text) {
+  // Check for Chinese characters
+  if (/[\u4e00-\u9fa5]/.test(text)) {
+    return 'zh';
+  }
+  // Check for Japanese characters
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) {
+    return 'ja';
+  }
+  // Check for Korean characters
+  if (/[\uac00-\ud7af]/.test(text)) {
+    return 'ko';
+  }
+  // Default to English
+  return 'en';
+}
 
-  /**
-   * Format date with time
-   */
-  formatDateTime(date) {
-    if (!date) return 'N/A';
-    return new Date(date).toLocaleString();
-  },
+/**
+ * Robust JSON parser with error recovery
+ * Attempts multiple strategies to parse potentially malformed JSON from LLM
+ * @param {string} jsonString - JSON string to parse
+ * @param {string} fallbackText - Fallback text if parsing fails
+ * @returns {object} Parsed JSON or fallback structure
+ */
+function parseRobustJSON(jsonString, fallbackText) {
+  const createFallback = () => ({
+    structuredText: fallbackText || '',
+    language: 'en',
+    mainTopics: [],
+    keyPoints: [],
+    entities: { people: [], organizations: [], locations: [], dates: [] },
+    semanticChunks: []
+  });
 
-  /**
-   * Truncate text to specified length
-   */
-  truncate(text, maxLength = 100, suffix = '...') {
-    if (!text || text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + suffix;
-  },
+  try {
+    // Strategy 1: Direct parse
+    return JSON.parse(jsonString);
+  } catch (e1) {
+    console.warn('[AutoFeel Utils] Direct JSON parse failed, trying cleanup strategies...');
 
-  /**
-   * Generate unique ID
-   */
-  generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substring(2);
-  },
+    try {
+      // Strategy 2: Clean common issues
+      let cleaned = jsonString
+        // Remove trailing commas before closing brackets/braces
+        .replace(/,(\s*[}\]])/g, '$1')
+        // Fix unescaped newlines in strings
+        .replace(/:\s*"([^"]*)\n([^"]*)"(?=\s*[,}])/g, (match, p1, p2) => {
+          return `: "${p1}\\n${p2}"`;
+        })
+        // Remove any text after the final closing brace
+        .replace(/\}[^}]*$/, '}')
+        // Remove control characters except newlines and tabs
+        .replace(/[\x00-\x09\x0B-\x0C\x0E-\x1F\x7F]/g, '');
 
-  /**
-   * Export data as file download
-   */
-  exportData(data, filename, mimeType = 'application/json') {
-    const blob = new Blob([data], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  },
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      console.warn('[AutoFeel Utils] Cleanup strategy failed, trying truncation recovery...');
 
-  /**
-   * Show notification (shared notification logic)
-   */
-  showNotification(message, type = 'info', duration = 3000) {
-    // Try to find existing notification element
-    let notification = document.getElementById('autofeel-notification');
+      try {
+        // Strategy 3: Try to salvage truncated JSON
+        let truncated = jsonString;
 
-    if (!notification) {
-      notification = document.createElement('div');
-      notification.id = 'autofeel-notification';
-      notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 12px 20px;
-        border-radius: 8px;
-        color: white;
-        font-size: 14px;
-        font-weight: 500;
-        z-index: 10000;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        transition: all 0.3s;
-      `;
-      document.body.appendChild(notification);
-    }
+        // If it ends with incomplete array, close it
+        if (truncated.match(/\[[^\]]*$/)) {
+          truncated = truncated.replace(/,?\s*[^,\]]*$/, ']');
+        }
 
-    // Set color based on type
-    const colors = {
-      success: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      error: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-      info: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-      loading: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)'
-    };
+        // If it ends with incomplete object, close it
+        if (truncated.match(/\{[^}]*$/)) {
+          truncated = truncated.replace(/,?\s*[^,}]*$/, '}');
+        }
 
-    notification.style.background = colors[type] || colors.info;
-    notification.textContent = message;
-    notification.style.display = 'block';
-    notification.style.opacity = '1';
+        // Ensure proper closing braces
+        const openBraces = (truncated.match(/\{/g) || []).length;
+        const closeBraces = (truncated.match(/\}/g) || []).length;
+        const openBrackets = (truncated.match(/\[/g) || []).length;
+        const closeBrackets = (truncated.match(/\]/g) || []).length;
 
-    // Auto hide for success/error/info
-    if (type !== 'loading' && duration > 0) {
-      setTimeout(() => {
-        notification.style.opacity = '0';
-        setTimeout(() => {
-          notification.style.display = 'none';
-        }, 300);
-      }, duration);
-    }
+        truncated += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+        truncated += '}'.repeat(Math.max(0, openBraces - closeBraces));
 
-    return notification;
-  },
+        return JSON.parse(truncated);
+      } catch (e3) {
+        console.warn('[AutoFeel Utils] Truncation recovery failed, trying minimal extraction...');
 
-  /**
-   * Hide notification
-   */
-  hideNotification() {
-    const notification = document.getElementById('autofeel-notification');
-    if (notification) {
-      notification.style.opacity = '0';
-      setTimeout(() => {
-        notification.style.display = 'none';
-      }, 300);
+        try {
+          // Strategy 4: Extract only the structuredText field if possible
+          const textMatch = jsonString.match(/"structuredText"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          if (textMatch) {
+            const extracted = textMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            console.log('[AutoFeel Utils] Successfully extracted structuredText field');
+            return {
+              structuredText: extracted,
+              language: 'en',
+              mainTopics: [],
+              keyPoints: [],
+              entities: { people: [], organizations: [], locations: [], dates: [] },
+              semanticChunks: []
+            };
+          }
+        } catch (e4) {
+          console.error('[AutoFeel Utils] Minimal extraction failed');
+        }
+
+        // Strategy 5: Complete fallback
+        console.error('[AutoFeel Utils] All JSON parsing strategies failed, using fallback');
+        console.error('[AutoFeel Utils] Original error:', e1.message);
+        console.error('[AutoFeel Utils] JSON string preview:', jsonString.substring(0, 500) + '...');
+        return createFallback();
+      }
     }
   }
-};
-
-// Export for use in other scripts
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = Utils;
 }

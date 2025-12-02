@@ -4,6 +4,7 @@ const elements = {
   toggleKey: document.getElementById('toggle-key'),
   apiEndpoint: document.getElementById('api-endpoint'),
   modelName: document.getElementById('model-name'),
+  customModelName: document.getElementById('custom-model-name'),
   systemPrompt: document.getElementById('system-prompt'),
   testBtn: document.getElementById('test-btn'),
   saveBtn: document.getElementById('save-btn'),
@@ -26,12 +27,64 @@ const elements = {
   lastUpdated: document.getElementById('last-updated')
 };
 
+// Model lists for different providers
+const modelOptions = {
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o (Latest, Recommended)' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Faster, Cheaper)' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+    { value: 'gpt-4', label: 'GPT-4' },
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Cheapest)' }
+  ],
+  anthropic: [
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Latest, Recommended)' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Faster, Cheaper)' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (Most Capable)' },
+    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku (Cheapest)' }
+  ],
+  custom: [
+    { value: 'custom', label: 'Custom Model (Enter below)' }
+  ]
+};
+
+// Update model dropdown based on provider
+function updateModelOptions(provider) {
+  const modelSelect = elements.modelName;
+  const customInput = elements.customModelName;
+
+  // Clear existing options
+  modelSelect.innerHTML = '<option value="">-- Select Model --</option>';
+
+  if (!provider) {
+    customInput.style.display = 'none';
+    return;
+  }
+
+  // Add models for selected provider
+  const models = modelOptions[provider] || [];
+  models.forEach(model => {
+    const option = document.createElement('option');
+    option.value = model.value;
+    option.textContent = model.label;
+    modelSelect.appendChild(option);
+  });
+
+  // Show/hide custom input for custom provider
+  if (provider === 'custom') {
+    customInput.style.display = 'block';
+  } else {
+    customInput.style.display = 'none';
+  }
+}
+
 async function loadSettings() {
   const settings = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
 
   if (settings.llmProvider) {
     elements.llmProvider.value = settings.llmProvider;
     updateFormVisibility();
+    updateModelOptions(settings.llmProvider);
     fillDefaultValues(settings.llmProvider);
   }
 
@@ -44,7 +97,16 @@ async function loadSettings() {
   }
 
   if (settings.modelName) {
-    elements.modelName.value = settings.modelName;
+    // Check if it's a custom model
+    const isCustomModel = settings.llmProvider === 'custom' ||
+                         !Array.from(elements.modelName.options).some(opt => opt.value === settings.modelName);
+
+    if (isCustomModel && settings.llmProvider === 'custom') {
+      elements.modelName.value = 'custom';
+      elements.customModelName.value = settings.modelName;
+    } else {
+      elements.modelName.value = settings.modelName;
+    }
   }
 
   if (settings.systemPrompt) {
@@ -56,7 +118,7 @@ function fillDefaultValues(provider) {
   const defaults = {
     openai: {
       endpoint: 'https://api.openai.com/v1/chat/completions',
-      model: 'gpt-4'
+      model: 'gpt-4o'
     },
     anthropic: {
       endpoint: 'https://api.anthropic.com/v1/messages',
@@ -64,7 +126,7 @@ function fillDefaultValues(provider) {
     },
     custom: {
       endpoint: '',
-      model: ''
+      model: 'custom'
     }
   };
 
@@ -73,10 +135,19 @@ function fillDefaultValues(provider) {
     if (!elements.apiEndpoint.value) {
       elements.apiEndpoint.value = config.endpoint;
     }
-    if (!elements.modelName.value) {
+    if (!elements.modelName.value || elements.modelName.value === '-- Select Model --') {
       elements.modelName.value = config.model;
     }
   }
+}
+
+// Get actual model name (handles custom model input)
+function getActualModelName() {
+  const selectedModel = elements.modelName.value;
+  if (selectedModel === 'custom' && elements.customModelName.value) {
+    return elements.customModelName.value.trim();
+  }
+  return selectedModel;
 }
 
 function updateFormVisibility() {
@@ -108,7 +179,7 @@ async function testAPI() {
   const provider = elements.llmProvider.value;
   const apiKey = elements.apiKey.value;
   const endpoint = elements.apiEndpoint.value;
-  const model = elements.modelName.value;
+  const model = getActualModelName();
 
   if (!apiKey) {
     showStatus('Please enter API Key', 'error');
@@ -121,7 +192,7 @@ async function testAPI() {
   }
 
   if (!model) {
-    showStatus('Please enter model name', 'error');
+    showStatus('Please select a model or enter a custom model name', 'error');
     return;
   }
 
@@ -155,7 +226,7 @@ async function saveSettings() {
   const provider = elements.llmProvider.value;
   const apiKey = elements.apiKey.value;
   const endpoint = elements.apiEndpoint.value;
-  const model = elements.modelName.value;
+  const model = getActualModelName();
   const systemPrompt = elements.systemPrompt.value;
 
   if (!apiKey) {
@@ -169,7 +240,7 @@ async function saveSettings() {
   }
 
   if (!model) {
-    showStatus('Please enter model name', 'error');
+    showStatus('Please select a model or enter a custom model name', 'error');
     return;
   }
 
@@ -250,8 +321,10 @@ async function resetTokenUsage() {
 }
 
 elements.llmProvider.addEventListener('change', () => {
+  const provider = elements.llmProvider.value;
   updateFormVisibility();
-  fillDefaultValues(elements.llmProvider.value);
+  updateModelOptions(provider);
+  fillDefaultValues(provider);
 });
 
 elements.toggleKey.addEventListener('click', toggleApiKey);
