@@ -564,18 +564,37 @@ function htmlToMarkdown(element) {
   return markdown.trim();
 }
 
-function detectFormFields(excludeFieldIds = []) {
+function detectFormFields(excludeFieldIds = [], afterFieldId = null) {
   const fields = [];
   const processedRadioGroups = new Set(); // Track processed radio groups
   const excludeSet = new Set(excludeFieldIds); // Convert to Set for fast lookup
 
-  // Find all form fields (text inputs, textareas, selects, checkboxes, radios)
-  const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input[type="checkbox"], input[type="radio"], input:not([type]), textarea, select');
+  // Find all form fields (text inputs, textareas, selects, checkboxes, radios, button-based selects)
+  let inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="number"], input[type="date"], input[type="checkbox"], input[type="radio"], input:not([type]), textarea, select, button[aria-haspopup="listbox"], button[aria-haspopup="true"]'));
+
+  // If afterFieldId is specified, only include fields that come after that field in DOM order
+  if (afterFieldId) {
+    const afterElement = document.querySelector(`[data-autofeel-id="${afterFieldId}"]`);
+    if (afterElement) {
+      console.log(`[AutoFeel Field Detection] 🔍 Detecting only fields after: ${afterFieldId}`);
+
+      // Filter to only include elements that come after the reference element
+      inputs = inputs.filter(input => {
+        // Compare positions in the DOM
+        const position = afterElement.compareDocumentPosition(input);
+        // DOCUMENT_POSITION_FOLLOWING (4) means the input comes after afterElement
+        return (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      });
+    }
+  }
 
   console.log('='.repeat(80));
   console.log('[AutoFeel Field Detection] 🔍 STARTING FIELD DETECTION');
+  if (afterFieldId) {
+    console.log(`[AutoFeel Field Detection] 🔽 Only detecting fields BELOW: ${afterFieldId}`);
+  }
   if (excludeFieldIds.length > 0) {
-    console.log(`[AutoFeel Field Detection] 🔍 Re-detection mode: excluding ${excludeFieldIds.length} already processed fields`);
+    console.log(`[AutoFeel Field Detection] 🔍 Excluding ${excludeFieldIds.length} already processed fields`);
   }
   console.log('='.repeat(80));
   console.log(`[AutoFeel Field Detection] Found ${inputs.length} total input elements`);
@@ -604,6 +623,14 @@ function detectFormFields(excludeFieldIds = []) {
     // Skip hidden or disabled fields
     if (input.offsetParent === null || input.disabled || input.readOnly) {
       console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: hidden/disabled/readonly`);
+      console.log('');
+      return;
+    }
+
+    // Skip fields that are inside navigation/header elements (not real form fields)
+    const isInNavigation = input.closest('nav, header, [role="navigation"], [role="banner"], [role="menubar"]');
+    if (isInNavigation) {
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: field is inside navigation/header element`);
       console.log('');
       return;
     }
@@ -723,6 +750,27 @@ function detectFormFields(excludeFieldIds = []) {
       debugMethods.push(`Method 7 (name attribute): "${label}"`);
     }
 
+    // Special handling for button-based selects
+    let buttonCurrentValue = '';
+    if (input.tagName === 'BUTTON' && (input.getAttribute('aria-haspopup') === 'listbox' || input.getAttribute('aria-haspopup') === 'true')) {
+      // Extract current selection from button text
+      buttonCurrentValue = input.textContent.trim();
+      debugMethods.push(`Button-based select detected, current value: "${buttonCurrentValue}"`);
+
+      // For button selects, if no label found through standard methods,
+      // look for a label-like element before the button
+      if (!label) {
+        const container = input.closest('[data-automation-id*="container"], .form-field, .field-wrapper, div[class*="field"]');
+        if (container) {
+          const labelElement = container.querySelector('label, .label, [class*="label"]');
+          if (labelElement && !labelElement.contains(input)) {
+            label = labelElement.textContent.trim();
+            debugMethods.push(`Method Button (container label): "${label}"`);
+          }
+        }
+      }
+    }
+
     console.log('[AutoFeel Field Detection] Label detection methods tried:');
     if (debugMethods.length > 0) {
       debugMethods.forEach(method => console.log('  ✓', method));
@@ -772,22 +820,14 @@ function detectFormFields(excludeFieldIds = []) {
       // Field already has an ID from previous detection
       fieldId = input.dataset.autofeelId;
 
-      // Skip if this field is in the exclude list (already processed)
+      // Skip ONLY if this field is in the exclude list (already processed)
       if (excludeSet.has(fieldId)) {
         console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: already processed (${fieldId})`);
         console.log('');
         return;
       }
 
-      // Field has ID but not in exclude list - means it's already in queue waiting to be processed
-      // Don't return it again to avoid duplicates
-      if (excludeFieldIds.length > 0) {
-        console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: already in queue (${fieldId})`);
-        console.log('');
-        return;
-      }
-
-      // First detection - keep the field
+      // Field has ID but not processed yet - include it in detection
       console.log(`[AutoFeel Field Detection] ✓ Field with existing ID: ${fieldId}`);
       isNewField = false;
     } else {
@@ -798,12 +838,20 @@ function detectFormFields(excludeFieldIds = []) {
       console.log(`[AutoFeel Field Detection] 🆕 New field detected: ${fieldId}`);
     }
 
+    // Determine field type
+    let fieldType;
+    if (input.tagName === 'BUTTON' && (input.getAttribute('aria-haspopup') === 'listbox' || input.getAttribute('aria-haspopup') === 'true')) {
+      fieldType = 'button-select';
+    } else {
+      fieldType = input.type || input.tagName.toLowerCase();
+    }
+
     const fieldInfo = {
       id: fieldId,
       label: label,
       placeholder: placeholder,
-      type: input.type || input.tagName.toLowerCase(),
-      value: input.value,
+      type: fieldType,
+      value: input.value || buttonCurrentValue,  // For buttons, use button text as current value
       name: input.name
     };
 
@@ -838,6 +886,22 @@ function detectFormFields(excludeFieldIds = []) {
         fieldInfo.options = options;
         console.log(`[AutoFeel Field Detection] 📋 Select has ${options.length} options:`, options.map(o => o.label).join(', '));
       }
+    }
+
+    // Skip button-based selects without a meaningful label (likely navigation/action buttons, not form controls)
+    if (fieldInfo.type === 'button-select' && (!label || label.length === 0)) {
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: button-based select without label (likely not a form field)`);
+      console.log('');
+      return;
+    }
+
+    // Skip fields with suspiciously long labels (likely navigation/header elements, not form fields)
+    // Real form field labels are typically under 200 characters
+    if (label && label.length > 200) {
+      console.log(`[AutoFeel Field Detection] ⏭️ SKIPPED: label too long (${label.length} chars, likely not a form field)`);
+      console.log(`[AutoFeel Field Detection] Label preview: "${label.substring(0, 100)}..."`);
+      console.log('');
+      return;
     }
 
     fields.push(fieldInfo);
@@ -893,7 +957,20 @@ async function fillSingleField(fieldId, fieldData) {
   const fieldType = input.tagName.toLowerCase();
   const inputType = input.type ? input.type.toLowerCase() : '';
 
-  if (fieldType === 'select') {
+  // Check if this is a custom searchable select (Workday-style)
+  const isSearchableSelect =
+    input.dataset.uxiWidgetType === 'selectinput' ||
+    (input.getAttribute('placeholder') === 'Search' && input.getAttribute('autocomplete') === 'off');
+
+  // Check if this is a button-based select
+  const isButtonSelect =
+    input.tagName === 'BUTTON' && (input.getAttribute('aria-haspopup') === 'listbox' || input.getAttribute('aria-haspopup') === 'true');
+
+  if (isSearchableSelect) {
+    await fillSearchableSelect(input, answer);
+  } else if (isButtonSelect) {
+    await fillButtonSelect(input, answer);
+  } else if (fieldType === 'select') {
     await fillSelectField(input, answer);
   } else if (inputType === 'checkbox') {
     await fillCheckboxField(input, answer);
@@ -1042,6 +1119,214 @@ async function fillFieldWithAnimation(input, answer) {
   console.log(`[AutoFeel] ✓ Filled field with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
 }
 
+async function fillSearchableSelect(input, answer) {
+  console.log(`[AutoFeel] Filling searchable select with: "${answer}"`);
+
+  // Parse answer - support hierarchical paths like "Government > Federal > Defense"
+  const answerPath = answer.split('>').map(s => s.trim());
+  console.log(`[AutoFeel] Answer path:`, answerPath);
+
+  // Scroll to field
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Start recursive selection
+  const result = await selectFromDropdown(input, answerPath, 0);
+
+  if (result) {
+    console.log(`[AutoFeel] ✓ Successfully selected: "${answer}"`);
+  } else {
+    console.warn(`[AutoFeel] ⚠️ Failed to select: "${answer}"`);
+  }
+}
+
+async function fillButtonSelect(button, answer) {
+  console.log(`[AutoFeel] Filling button-based select with: "${answer}"`);
+
+  // Parse answer - support hierarchical paths like "Government > Federal > Defense"
+  const answerPath = answer.split('>').map(s => s.trim());
+  console.log(`[AutoFeel] Answer path:`, answerPath);
+
+  // Scroll to button
+  button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Start recursive selection using the button as trigger
+  const result = await selectFromDropdown(button, answerPath, 0);
+
+  if (result) {
+    console.log(`[AutoFeel] ✓ Successfully selected: "${answer}"`);
+  } else {
+    console.warn(`[AutoFeel] ⚠️ Failed to select: "${answer}"`);
+  }
+}
+
+/**
+ * Recursively select options from dropdown menus
+ * @param {Element} trigger - The input or option that triggers the dropdown
+ * @param {string[]} answerPath - Array of answer segments (e.g., ["Government", "Federal"])
+ * @param {number} depth - Current depth in the path
+ * @returns {Promise<boolean>} - Whether selection was successful
+ */
+async function selectFromDropdown(trigger, answerPath, depth = 0) {
+  if (depth >= answerPath.length) {
+    return true; // Reached end of path
+  }
+
+  const currentAnswer = answerPath[depth];
+  console.log(`[AutoFeel] 🔍 Level ${depth}: Looking for "${currentAnswer}"`);
+
+  // Focus and click the trigger to open dropdown
+  if (trigger.tagName === 'INPUT') {
+    trigger.focus();
+    trigger.click();
+
+    // Type search text for input-based dropdowns
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeInputValueSetter.call(trigger, currentAnswer);
+
+    // Trigger events
+    trigger.dispatchEvent(new Event('input', { bubbles: true }));
+    trigger.dispatchEvent(new Event('change', { bubbles: true }));
+    trigger.dispatchEvent(new Event('keydown', { bubbles: true }));
+    trigger.dispatchEvent(new Event('keyup', { bubbles: true }));
+  } else if (trigger.tagName === 'BUTTON') {
+    // For button-based selects, just focus and click (no typing)
+    trigger.focus();
+    trigger.click();
+    trigger.dispatchEvent(new Event('click', { bubbles: true }));
+  } else {
+    // For option elements (nested menus)
+    trigger.click();
+  }
+
+  // Wait for dropdown to appear
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  // Find visible options - try multiple selectors to support different implementations
+  let options = [];
+
+  // Try Workday-style options first
+  options = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"]'));
+
+  // If no Workday options found, try standard ARIA listbox pattern
+  if (options.length === 0) {
+    options = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] > div, [role="listbox"] > li'));
+  }
+
+  // Filter to visible options only
+  options = options.filter(opt => {
+    const style = window.getComputedStyle(opt);
+    return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+  });
+
+  if (options.length === 0) {
+    console.warn(`[AutoFeel] ⚠️ No visible options found at level ${depth}`);
+    return false;
+  }
+
+  console.log(`[AutoFeel] Found ${options.length} visible options`);
+
+  // Find matching option
+  const matchedOption = findMatchingOption(options, currentAnswer);
+
+  if (!matchedOption) {
+    console.warn(`[AutoFeel] ⚠️ No match found for "${currentAnswer}"`);
+    return false;
+  }
+
+  // Highlight the matched option
+  matchedOption.style.transition = 'all 0.2s ease';
+  matchedOption.style.backgroundColor = 'rgba(76, 175, 80, 0.2)';
+  matchedOption.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  console.log(`[AutoFeel] ✓ Level ${depth}: Matched "${matchedOption.textContent.trim()}"`);
+
+  // Check if this option has a submenu (indicated by aria attributes or structure)
+  const hasSubmenu =
+    matchedOption.getAttribute('aria-haspopup') === 'true' ||
+    matchedOption.getAttribute('aria-expanded') !== null ||
+    matchedOption.querySelector('[aria-haspopup="true"]') !== null;
+
+  const isLastInPath = depth === answerPath.length - 1;
+
+  if (hasSubmenu && !isLastInPath) {
+    // This is a parent option with submenu, and we have more path segments
+    console.log(`[AutoFeel] 📂 Has submenu, continuing to level ${depth + 1}`);
+
+    // Hover or click to expand submenu (don't finalize selection yet)
+    matchedOption.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // Recursively select from submenu
+    return await selectFromDropdown(matchedOption, answerPath, depth + 1);
+  } else {
+    // This is a leaf option or the last in our path, finalize selection
+    console.log(`[AutoFeel] 🎯 Leaf option or end of path, finalizing selection`);
+
+    matchedOption.click();
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // If we haven't reached the end of path but there's no submenu,
+    // the remaining segments might be in a cascading dropdown (handled by dynamic detection)
+    return true;
+  }
+}
+
+/**
+ * Find matching option from a list of options
+ */
+function findMatchingOption(options, targetText) {
+  const targetLower = targetText.toLowerCase().trim();
+
+  // Helper function to get all relevant text from an option
+  function getOptionTexts(option) {
+    return {
+      text: option.textContent.trim().toLowerCase(),
+      dataLabel: option.getAttribute('data-automation-label')?.toLowerCase() || '',
+      ariaLabel: option.getAttribute('aria-label')?.toLowerCase() || '',
+      value: option.getAttribute('value')?.toLowerCase() || ''
+    };
+  }
+
+  // 1. Exact match (text or any label)
+  for (const option of options) {
+    const texts = getOptionTexts(option);
+    if (texts.text === targetLower ||
+        texts.dataLabel === targetLower ||
+        texts.ariaLabel === targetLower ||
+        texts.value === targetLower) {
+      return option;
+    }
+  }
+
+  // 2. Starts with match
+  for (const option of options) {
+    const texts = getOptionTexts(option);
+    if (texts.text.startsWith(targetLower) ||
+        texts.dataLabel.startsWith(targetLower) ||
+        texts.ariaLabel.startsWith(targetLower) ||
+        texts.value.startsWith(targetLower)) {
+      return option;
+    }
+  }
+
+  // 3. Contains match
+  for (const option of options) {
+    const texts = getOptionTexts(option);
+    if (texts.text.includes(targetLower) || targetLower.includes(texts.text) ||
+        texts.dataLabel.includes(targetLower) || targetLower.includes(texts.dataLabel) ||
+        texts.ariaLabel.includes(targetLower) || targetLower.includes(texts.ariaLabel) ||
+        texts.value.includes(targetLower) || targetLower.includes(texts.value)) {
+      return option;
+    }
+  }
+
+  return null;
+}
+
 async function fillSelectField(select, answer) {
   // Scroll to field
   select.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1055,14 +1340,27 @@ async function fillSelectField(select, answer) {
 
   await new Promise(resolve => setTimeout(resolve, 200));
 
-  // Try to find matching option by text content (fuzzy match)
+  // Try to find matching option
   const options = Array.from(select.options);
-  const answerLower = answer.toLowerCase().trim();
+  const answerTrimmed = answer.trim();
+  const answerLower = answerTrimmed.toLowerCase();
 
-  let matchedOption = options.find(opt => opt.text.toLowerCase().trim() === answerLower);
+  let matchedOption = null;
 
+  // 1. Check if answer is a number (option index)
+  const answerNum = parseInt(answerTrimmed);
+  if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= options.length) {
+    matchedOption = options[answerNum - 1]; // Convert 1-based to 0-based index
+    console.log(`[AutoFeel] ✓ Matched by number: option ${answerNum}`);
+  }
+
+  // 2. Try exact text match
   if (!matchedOption) {
-    // Try partial match
+    matchedOption = options.find(opt => opt.text.toLowerCase().trim() === answerLower);
+  }
+
+  // 3. Try partial match
+  if (!matchedOption) {
     matchedOption = options.find(opt =>
       opt.text.toLowerCase().includes(answerLower) ||
       answerLower.includes(opt.text.toLowerCase().trim())
@@ -1124,19 +1422,29 @@ async function fillRadioField(radio, answer) {
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  const answerLower = answer.toLowerCase().trim();
+  const answerTrimmed = answer.trim();
+  const answerLower = answerTrimmed.toLowerCase();
   let matchedRadio = null;
 
-  // Try to find matching radio by label text
-  for (const r of radioGroup) {
-    const label = findLabelForInput(r);
-    if (label && label.toLowerCase().includes(answerLower)) {
-      matchedRadio = r;
-      break;
+  // 1. Check if answer is a number (option index)
+  const answerNum = parseInt(answerTrimmed);
+  if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= radioGroup.length) {
+    matchedRadio = radioGroup[answerNum - 1]; // Convert 1-based to 0-based index
+    console.log(`[AutoFeel] ✓ Matched radio by number: option ${answerNum}`);
+  }
+
+  // 2. Try to find matching radio by label text
+  if (!matchedRadio) {
+    for (const r of radioGroup) {
+      const label = findLabelForInput(r);
+      if (label && label.toLowerCase().includes(answerLower)) {
+        matchedRadio = r;
+        break;
+      }
     }
   }
 
-  // If no match by label, try by value
+  // 3. If no match by label, try by value
   if (!matchedRadio) {
     matchedRadio = Array.from(radioGroup).find(r =>
       r.value.toLowerCase() === answerLower
@@ -1320,7 +1628,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'DETECT_FORM_FIELDS') {
     try {
       const excludeFieldIds = request.excludeFieldIds || [];
-      const fields = detectFormFields(excludeFieldIds);
+      const afterFieldId = request.afterFieldId || null;
+      const fields = detectFormFields(excludeFieldIds, afterFieldId);
       sendResponse({ success: true, fields: fields });
     } catch (error) {
       sendResponse({ success: false, error: error.message });

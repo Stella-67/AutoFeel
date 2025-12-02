@@ -349,26 +349,29 @@ async function handleAutoFillForm() {
     }
 
     // Generate and fill answers one by one
+    // Strategy: Always re-detect all unprocessed fields after each fill
+    // This handles fields appearing/disappearing/reordering dynamically
     let totalTokens = 0;
     let successCount = 0;
-    const processedFieldIds = new Set(); // Track processed fields to avoid duplicates
+    const processedFieldIds = new Set(); // Track processed fields by ID
 
-    let i = 0;
-    while (i < formFields.length) {
-      const field = formFields[i];
+    let currentFields = formFields; // Start with initial detection
+    let iterationCount = 0;
+    const MAX_ITERATIONS = 100; // Safety limit to prevent infinite loops
 
-      // Skip if already processed (avoid duplicates from dynamic detection)
-      if (processedFieldIds.has(field.id)) {
-        i++;
-        continue;
-      }
+    while (currentFields.length > 0 && iterationCount < MAX_ITERATIONS) {
+      iterationCount++;
 
-      await notifyTab(tab.id, `Generating answer ${i + 1}/${formFields.length}...`, 'loading');
+      // Always process the first unprocessed field in current DOM order
+      const field = currentFields[0];
+
+      // Show progress notification
+      await notifyTab(tab.id, `Generating answer ${processedFieldIds.size + 1}/${processedFieldIds.size + currentFields.length}...`, 'loading');
 
       const answer = await generateSingleFieldAnswer(field, savedContext, config);
 
+      // Fill the field (or show hint if empty)
       if (answer.success) {
-        // Send this answer to fill immediately
         await chrome.tabs.sendMessage(tab.id, {
           type: 'FILL_SINGLE_FIELD',
           fieldId: field.id,
@@ -380,39 +383,52 @@ async function handleAutoFillForm() {
         }
 
         successCount++;
-        processedFieldIds.add(field.id); // Mark as processed
-
-        // Wait for page to update (conditional fields may appear)
-        await new Promise(resolve => setTimeout(resolve, 600));
-
-        // Check for newly appeared fields (dynamic form fields)
-        try {
-          const detectionResult = await chrome.tabs.sendMessage(tab.id, {
-            type: 'DETECT_FORM_FIELDS',
-            excludeFieldIds: Array.from(processedFieldIds)
-          });
-
-          if (detectionResult && detectionResult.fields && detectionResult.fields.length > 0) {
-            console.log(`[AutoFeel] 🆕 Detected ${detectionResult.fields.length} new fields after filling "${field.label}"`);
-
-            // Insert new fields right after current position (not at the end)
-            // This ensures conditional fields are filled immediately after their trigger
-            formFields.splice(i + 1, 0, ...detectionResult.fields);
-
-            console.log(`[AutoFeel] 📌 Inserted new fields at position ${i + 1}`);
-          }
-        } catch (detectError) {
-          console.log('[AutoFeel] No new fields detected or detection failed:', detectError.message);
-        }
       } else {
         console.error(`[AutoFeel] Failed to generate answer for ${field.id}:`, answer.error);
-        processedFieldIds.add(field.id); // Mark as processed even if failed
       }
 
-      i++;
+      // Always mark as processed (whether filled or not)
+      processedFieldIds.add(field.id);
+
+      // Wait for page to update (fields may appear/disappear/reorder)
+      await new Promise(resolve => setTimeout(resolve, 600));
+
+      // Always re-detect ALL unprocessed fields
+      // This handles any dynamic changes: new fields, disappeared fields, reordered fields
+      try {
+        const detectionResult = await chrome.tabs.sendMessage(tab.id, {
+          type: 'DETECT_FORM_FIELDS',
+          excludeFieldIds: Array.from(processedFieldIds)
+        });
+
+        if (detectionResult && detectionResult.success && detectionResult.fields) {
+          const oldCount = currentFields.length;
+          const newCount = detectionResult.fields.length;
+
+          currentFields = detectionResult.fields; // Replace entire queue
+
+          if (newCount !== oldCount - 1) {
+            // Expected: oldCount - 1 (we just processed one)
+            // If different, fields were added or removed
+            const delta = newCount - (oldCount - 1);
+            console.log(`[AutoFeel] 🔄 Fields changed: ${oldCount} → ${newCount} (${delta > 0 ? '+' : ''}${delta})`);
+          }
+        } else {
+          // No more fields detected
+          currentFields = [];
+        }
+      } catch (detectError) {
+        console.log('[AutoFeel] Re-detection failed:', detectError.message);
+        currentFields = [];
+      }
     }
 
-    await notifyTab(tab.id, `Form filled! ${successCount}/${formFields.length} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
+    if (iterationCount >= MAX_ITERATIONS) {
+      console.warn('[AutoFeel] ⚠️ Reached maximum iteration limit. Stopping to prevent infinite loop.');
+    }
+
+    const totalFields = processedFieldIds.size;
+    await notifyTab(tab.id, `✅ Successfully filled ${successCount}/${totalFields} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
   } catch (error) {
     console.error('[AutoFeel] Error in handleAutoFillForm:', error);
     try {
@@ -553,7 +569,7 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
       field.options.forEach((option, index) => {
         userPrompt += `${index + 1}. ${option.label}\n`;
       });
-      userPrompt += `\nPlease choose ONE option from the list above. Return the exact label text as your answer.\n\n`;
+      userPrompt += `\nPlease choose ONE option from the list above.\nYou can return either:\n- Just the number (e.g., "3")\n- Or the exact label text (e.g., "United States")\n\n`;
     } else {
       userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
     }
