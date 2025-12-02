@@ -8,6 +8,7 @@ importScripts('/src/embedding-service.js');
 importScripts('/src/text-processor.js');
 importScripts('/src/schema-builder.js');
 importScripts('/src/db.js');
+importScripts('/src/decision-agent.js');
 
 // ==================== Message Listeners ====================
 
@@ -189,36 +190,22 @@ async function handleSendToLLM() {
           }
         });
 
-        // ==================== SAVE TO DATABASE ====================
-        console.log('[AutoFeel Background] Step 9: Saving to database...');
+        // ==================== DECISION AGENT: ANALYZE & SAVE ====================
+        console.log('[AutoFeel Background] Step 9: Analyzing save strategy...');
 
         let saveResult = null;
         try {
           await memoryDB.init();
 
-          console.log('[AutoFeel Background] Searching for existing document...');
-          const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
+          // Create decision agent
+          const decisionAgent = new DecisionAgent(memoryDB);
 
-          if (existingDoc) {
-            console.log('[AutoFeel Background] Document exists, checking if update needed...');
-            const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
+          // Analyze what to do
+          const decision = await decisionAgent.decide(documentSchema, chunkSchemas);
+          console.log('[AutoFeel Background] Decision:', decisionAgent.explainDecision(decision));
 
-            if (updateCheck.shouldUpdate) {
-              console.log(`[AutoFeel Background] Content changed (similarity: ${(updateCheck.textSimilarity * 100).toFixed(1)}%), updating...`);
-              await memoryDB.deleteDocument(existingDoc.id);
-              await memoryDB.saveDocument(documentSchema);
-              await memoryDB.saveChunks(chunkSchemas);
-              saveResult = { success: true, action: 'updated', reason: 'Content changed' };
-            } else {
-              console.log(`[AutoFeel Background] Content similar (${(updateCheck.textSimilarity * 100).toFixed(1)}%), skipping save`);
-              saveResult = { success: true, action: 'skipped', reason: 'Content too similar to existing' };
-            }
-          } else {
-            console.log('[AutoFeel Background] New document, saving...');
-            await memoryDB.saveDocument(documentSchema);
-            await memoryDB.saveChunks(chunkSchemas);
-            saveResult = { success: true, action: 'created', reason: 'New document' };
-          }
+          // Execute the decision
+          saveResult = await decisionAgent.execute(decision, documentSchema, chunkSchemas);
 
           console.log('[AutoFeel Background] Save completed:', saveResult);
         } catch (dbError) {
@@ -230,34 +217,26 @@ async function handleSendToLLM() {
         let completionMessage = '';
 
         if (saveResult && saveResult.success) {
-          const pageTypeEmoji = {
-            'profile': '👤',
-            'document': '📑',
-            'form': '📋',
-            'content': '📄',
-            'social': '💬',
-            'utility': '⚙️',
-            'unknown': '📄'
-          };
-
-          const emoji = pageTypeEmoji[perception.currentPage.pageType] || '📄';
-
           switch (saveResult.action) {
             case 'skipped':
-              completionMessage = `Background processing complete. Already in memory.`;
+              completionMessage = `⏭️ Already in memory (${saveResult.reason})`;
               break;
 
             case 'updated':
-              completionMessage = `🔄 Background processing complete. Updated in memory (v${saveResult.version}, ${saveResult.newChunkCount} chunks)`;
+              if (saveResult.addedChunks !== undefined) {
+                completionMessage = `🔄 Updated: added ${saveResult.addedChunks} new chunks (total: ${saveResult.totalChunks})`;
+              } else {
+                completionMessage = `🔄 Updated in memory (${saveResult.chunkCount} chunks)`;
+              }
               break;
 
             case 'created':
             default:
-              completionMessage = `${emoji} Background processing complete. Saved to memory (${saveResult.chunkCount} chunks)`;
+              completionMessage = `📄 Saved to memory (${saveResult.chunkCount} chunks)`;
               break;
           }
         } else {
-          completionMessage = '✅ Background processing complete';
+          completionMessage = '⚠️ Save failed';
         }
 
         if (preCleaningResult.tokenUsage) {
