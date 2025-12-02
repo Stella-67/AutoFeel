@@ -12,6 +12,31 @@ importScripts('/src/perception-agent.js');
 importScripts('/src/reasoning-agent.js');
 importScripts('/src/action-agent.js');
 
+// ==================== Message Listeners ====================
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'TEST_API') {
+    // Handle test API request from popup
+    (async () => {
+      try {
+        const result = await testAPIConnection({
+          llmProvider: message.config.provider,
+          apiKey: message.config.apiKey,
+          apiEndpoint: message.config.endpoint,
+          modelName: message.config.model
+        });
+        sendResponse(result);
+      } catch (error) {
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
+});
+
 // ==================== Command Listeners ====================
 
 chrome.commands.onCommand.addListener(async (command) => {
