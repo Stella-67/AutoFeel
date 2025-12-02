@@ -751,6 +751,155 @@ function detectFormFields() {
   return fields;
 }
 
+async function fillSingleField(fieldId, fieldData) {
+  console.log(`[AutoFeel] Filling single field: ${fieldId}`);
+
+  const input = document.querySelector(`[data-autofeel-id="${fieldId}"]`);
+
+  if (!input) {
+    console.warn(`[AutoFeel] Field ${fieldId} not found in DOM`);
+    return;
+  }
+
+  // Extract answer and explanation
+  const answer = typeof fieldData === 'string' ? fieldData : fieldData.answer;
+  const explanation = typeof fieldData === 'object' ? fieldData.explanation : null;
+
+  // Handle empty answers with hint
+  if (!answer || answer.trim() === '') {
+    await showEmptyFieldHint(input, fieldId, explanation);
+    return;
+  }
+
+  // Fill the field with animation
+  await fillFieldWithAnimation(input, answer);
+}
+
+async function showEmptyFieldHint(input, fieldId, explanation) {
+  console.log(`[AutoFeel] Showing hint for ${fieldId} (empty answer)`);
+
+  // Scroll to field
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Add a hint below the field
+  const hint = document.createElement('div');
+  hint.className = 'autofeel-empty-hint';
+
+  // Get input's computed styles to match alignment
+  const inputStyles = window.getComputedStyle(input);
+  const inputMarginLeft = inputStyles.marginLeft;
+
+  hint.style.cssText = `
+    margin-top: 4px;
+    margin-left: ${inputMarginLeft};
+    padding: 8px 12px;
+    background-color: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    color: #856404;
+    font-size: 13px;
+    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    animation: autofeel-hint-fadein 0.3s ease;
+    box-sizing: border-box;
+  `;
+
+  // Use LLM's explanation if available
+  const explanationText = explanation ||
+    'No relevant information found in your saved context. Please fill manually or use Alt+C to save more information.';
+
+  hint.innerHTML = `
+    <strong>💡 AutoFeel:</strong> ${explanationText}
+  `;
+
+  // Add CSS animations
+  if (!document.getElementById('autofeel-hint-styles')) {
+    const style = document.createElement('style');
+    style.id = 'autofeel-hint-styles';
+    style.textContent = `
+      @keyframes autofeel-hint-fadein {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes autofeel-hint-fadeout {
+        from { opacity: 1; transform: translateY(0); }
+        to { opacity: 0; transform: translateY(-10px); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Insert hint after the input
+  input.parentElement.insertBefore(hint, input.nextSibling);
+
+  // Highlight the field briefly
+  input.style.transition = 'all 0.3s ease';
+  input.style.outline = '2px solid #ffc107';
+  input.style.outlineOffset = '2px';
+
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  input.style.outline = 'none';
+
+  // Remove hint after 8 seconds or when user focuses the field
+  const removeHint = () => {
+    hint.style.animation = 'autofeel-hint-fadeout 0.3s ease';
+    setTimeout(() => hint.remove(), 300);
+  };
+
+  setTimeout(removeHint, 8000);
+  input.addEventListener('focus', removeHint, { once: true });
+}
+
+async function fillFieldWithAnimation(input, answer) {
+  // Scroll to field
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Add focus ring animation
+  input.style.transition = 'all 0.3s ease';
+  input.style.outline = '3px solid #4CAF50';
+  input.style.outlineOffset = '2px';
+  input.focus();
+
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  // Typing animation effect
+  if (answer.length > 0) {
+    input.value = '';
+
+    // Type character by character for short answers
+    if (answer.length < 20) {
+      for (let charIndex = 0; charIndex < answer.length; charIndex++) {
+        input.value += answer[charIndex];
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } else {
+      // For long answers, just set directly
+      input.value = answer;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  // Trigger change events
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new Event('blur', { bubbles: true }));
+
+  // Success animation
+  input.style.outline = '3px solid #4CAF50';
+  input.style.backgroundColor = '#e8f5e9';
+
+  await new Promise(resolve => setTimeout(resolve, 400));
+
+  // Fade out animation
+  input.style.outline = 'none';
+  input.style.backgroundColor = '';
+
+  console.log(`[AutoFeel] ✓ Filled field with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
+}
+
 async function fillFormFields(answers) {
   console.log('[AutoFeel] Starting sequential form filling with animations...');
   console.log('[AutoFeel] Answers to fill:', JSON.stringify(answers, null, 2));
@@ -954,13 +1103,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'FILL_FORM') {
-    // Handle async form filling with animations
+    // Handle async form filling with animations (batch mode)
     (async () => {
       try {
         await fillFormFields(request.answers);
         sendResponse({ success: true });
       } catch (error) {
         console.error('[AutoFeel] Error filling form:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
+
+  if (request.type === 'FILL_SINGLE_FIELD') {
+    // Handle single field filling (one-by-one mode)
+    (async () => {
+      try {
+        await fillSingleField(request.fieldId, request.answer);
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('[AutoFeel] Error filling single field:', error);
         sendResponse({ success: false, error: error.message });
       }
     })();

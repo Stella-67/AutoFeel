@@ -229,6 +229,94 @@ class MemoryDB {
   }
 
   /**
+   * Keyword-based chunk search (fallback for providers without embedding)
+   * Searches all chunks for keyword matches and ranks by relevance
+   */
+  async keywordSearch(query, topK = 3) {
+    if (!this.db) await this.init();
+
+    // Extract keywords from query (simple tokenization)
+    const keywords = query
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ') // Remove punctuation
+      .split(/\s+/)
+      .filter(word => word.length > 2) // Filter short words
+      .filter(word => !['the', 'is', 'at', 'which', 'on', 'are', 'what', 'who', 'when', 'where', 'how', 'your', 'my'].includes(word)); // Remove stop words
+
+    if (keywords.length === 0) {
+      return [];
+    }
+
+    console.log(`[AutoFeel DB] Keyword search for: [${keywords.join(', ')}]`);
+
+    // Get all chunks from the correct object store
+    const tx = this.db.transaction([CHUNKS_STORE], 'readonly');
+    const store = tx.objectStore(CHUNKS_STORE);
+
+    // Wrap getAll in Promise
+    const allChunks = await new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    console.log(`[AutoFeel DB] Found ${allChunks.length} total chunks in database`);
+
+    if (allChunks.length === 0) {
+      console.log('[AutoFeel DB] No chunks in database yet');
+      return [];
+    }
+
+    // Score each chunk based on keyword matches
+    const scoredChunks = allChunks.map(chunk => {
+      const chunkText = chunk.text.toLowerCase();
+      let score = 0;
+
+      keywords.forEach(keyword => {
+        // Count occurrences of each keyword
+        const regex = new RegExp(keyword, 'gi');
+        const matches = chunkText.match(regex);
+        if (matches) {
+          score += matches.length * 10; // Base score per match
+        }
+
+        // Bonus for exact phrase match
+        if (chunkText.includes(keywords.join(' '))) {
+          score += 50;
+        }
+      });
+
+      // Boost score by chunk importance
+      score *= (chunk.importance || 0.5);
+
+      return {
+        ...chunk,
+        score: score
+      };
+    });
+
+    // Filter chunks with score > 0 and sort by score
+    const relevantChunks = scoredChunks
+      .filter(chunk => chunk.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK);
+
+    // Add similarity score (normalized to 0-1 for consistency with semantic search)
+    const maxScore = relevantChunks.length > 0 ? relevantChunks[0].score : 1;
+    const results = relevantChunks.map(chunk => ({
+      ...chunk,
+      similarity: Math.min(chunk.score / maxScore, 1.0),
+      source: {
+        title: chunk.source?.title || 'Unknown',
+        url: chunk.source?.url || ''
+      },
+      metadata: chunk.metadata || {}
+    }));
+
+    return results;
+  }
+
+  /**
    * Normalize URL for duplicate detection
    * Removes query params, hash, trailing slashes, and converts to lowercase
    */

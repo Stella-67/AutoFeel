@@ -3,27 +3,32 @@
 
 /**
  * Generate embedding vector for text using OpenAI API
+ * Note: DeepSeek does not provide embedding API, only OpenAI and Custom providers are supported
  */
 async function generateEmbedding(text, config) {
   const { llmProvider, apiKey, apiEndpoint } = config;
 
   if (llmProvider !== 'openai' && llmProvider !== 'custom') {
-    console.warn('[AutoFeel Embedding] Only supported for OpenAI provider');
+    console.log(`[AutoFeel Embedding] Provider '${llmProvider}' does not support embeddings. RAG retrieval will be skipped, using raw context only.`);
     return null;
   }
 
   try {
     let embeddingEndpoint;
+    let embeddingModel;
+
     if (llmProvider === 'openai') {
       embeddingEndpoint = 'https://api.openai.com/v1/embeddings';
+      embeddingModel = 'text-embedding-3-small';
     } else {
       const baseUrl = apiEndpoint.replace(/\/chat\/completions$/, '');
       embeddingEndpoint = `${baseUrl}/embeddings`;
+      embeddingModel = 'text-embedding-3-small';
     }
 
     const requestBody = {
       input: text,
-      model: 'text-embedding-3-small',
+      model: embeddingModel,
       encoding_format: 'float'
     };
 

@@ -7,7 +7,7 @@
 function buildLLMRequestBody(provider, modelName, userPrompt, systemPrompt = null, options = {}) {
   const { maxTokens = 1500, temperature = 0.7 } = options;
 
-  if (provider === 'openai' || provider === 'custom') {
+  if (provider === 'openai' || provider === 'deepseek' || provider === 'custom') {
     const messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: userPrompt });
@@ -48,7 +48,7 @@ function buildLLMHeaders(provider, apiKey) {
 function extractLLMResponse(provider, data) {
   if (provider === 'anthropic') {
     return data.content[0].text;
-  } else if (provider === 'openai' || provider === 'custom') {
+  } else if (provider === 'openai' || provider === 'deepseek' || provider === 'custom') {
     return data.choices[0].message.content;
   }
   return data.choices?.[0]?.message?.content || '';
@@ -59,7 +59,7 @@ function extractLLMResponse(provider, data) {
  */
 function extractTokenUsage(provider, data) {
   try {
-    if (provider === 'openai' || provider === 'custom') {
+    if (provider === 'openai' || provider === 'deepseek' || provider === 'custom') {
       const usage = data.usage;
       if (usage) {
         return {
@@ -96,6 +96,7 @@ async function updateTokenUsage(provider, usage) {
       byProvider: {
         openai: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
         anthropic: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+        deepseek: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
         custom: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
       },
       lastUpdated: null
@@ -132,6 +133,7 @@ async function resetTokenUsage() {
         byProvider: {
           openai: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
           anthropic: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
+          deepseek: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 },
           custom: { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 }
         },
         lastUpdated: new Date().toISOString()
@@ -152,9 +154,16 @@ async function testAPIConnection(config) {
   const { llmProvider, apiKey, apiEndpoint, modelName } = config;
 
   try {
-    const testPrompt = "Say 'API connection successful' if you can read this.";
-    const requestBody = buildLLMRequestBody(llmProvider, modelName, testPrompt, null, {
-      maxTokens: 50,
+    const systemPrompt = `You are a form-filling assistant that helps users auto-fill forms based on their saved context.`;
+
+    const testPrompt = `Context: John Smith, software engineer at TechCorp, email: john@example.com, phone: 555-0123
+
+Question: What is your full name?
+
+Return only the answer in JSON format: {"answer": "your answer"}`;
+
+    const requestBody = buildLLMRequestBody(llmProvider, modelName, testPrompt, systemPrompt, {
+      maxTokens: 100,
       temperature: 0
     });
 

@@ -396,28 +396,41 @@ async function handleAutoFillForm() {
       return;
     }
 
-    const answers = await generateFormAnswers(formFields, savedContext, config);
+    // Generate and fill answers one by one
+    let totalTokens = 0;
+    let successCount = 0;
 
-    if (answers.success) {
-      await chrome.tabs.sendMessage(tab.id, {
-        type: 'FILL_FORM',
-        answers: answers.data
-      });
+    for (let i = 0; i < formFields.length; i++) {
+      const field = formFields[i];
 
-      let successMessage = 'Form filled successfully!';
+      await notifyTab(tab.id, `Generating answer ${i + 1}/${formFields.length}...`, 'loading');
 
-      if (answers.retrievalStats) {
-        successMessage += ` [RAG: Retrieved ${answers.retrievalStats.totalChunks} chunks, top relevance ${(answers.retrievalStats.topSimilarity * 100).toFixed(0)}%]`;
+      const answer = await generateSingleFieldAnswer(field, savedContext, config);
+
+      if (answer.success) {
+        // Send this answer to fill immediately
+        await chrome.tabs.sendMessage(tab.id, {
+          type: 'FILL_SINGLE_FIELD',
+          fieldId: field.id,
+          answer: answer.data
+        });
+
+        if (answer.tokenUsage) {
+          totalTokens += answer.tokenUsage.totalTokens;
+        }
+
+        successCount++;
+      } else {
+        console.error(`[AutoFeel] Failed to generate answer for ${field.id}:`, answer.error);
       }
 
-      if (answers.tokenUsage) {
-        successMessage += ` (${answers.tokenUsage.totalTokens.toLocaleString()} tokens)`;
+      // Brief pause between fields
+      if (i < formFields.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
-
-      await notifyTab(tab.id, successMessage, 'success');
-    } else {
-      await notifyTab(tab.id, `Failed to generate answers: ${answers.error}`, 'error');
     }
+
+    await notifyTab(tab.id, `Form filled! ${successCount}/${formFields.length} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
   } catch (error) {
     console.error('[AutoFeel] Error in handleAutoFillForm:', error);
     try {
@@ -431,7 +444,190 @@ async function handleAutoFillForm() {
   }
 }
 
-// ==================== RAG-Enhanced Form Answer Generation ====================
+// ==================== Single Field Answer Generation ====================
+
+async function generateSingleFieldAnswer(field, savedContext, config) {
+  const { llmProvider, apiKey, apiEndpoint, modelName } = config;
+
+  try {
+    // ==================== RAG: Retrieve Relevant Knowledge ====================
+    let retrievedContext = '';
+    let retrievalStats = null;
+
+    const queryText = `${field.label || ''} ${field.placeholder || ''}`.trim();
+
+    console.log('─'.repeat(80));
+    console.log(`[AutoFeel Debug] 📝 FIELD: "${queryText}"`);
+    console.log('─'.repeat(80));
+
+    if (queryText) {
+      try {
+        if (llmProvider === 'openai' || llmProvider === 'custom') {
+          // Use semantic search with embeddings
+          console.log('[AutoFeel Debug] Step 1: Generating embedding for query...');
+          const queryEmbedding = await generateEmbedding(queryText, config);
+
+          if (queryEmbedding) {
+            console.log('[AutoFeel Debug] Step 2: Searching for relevant context (semantic search, top 3 chunks)...');
+            await memoryDB.init();
+            const searchResults = await memoryDB.semanticSearch(queryEmbedding, 3);
+
+            if (searchResults && searchResults.length > 0) {
+              console.log(`[AutoFeel Debug] ✅ Found ${searchResults.length} relevant chunks:\n`);
+
+              searchResults.forEach((chunk, index) => {
+                console.log(`  📄 Chunk ${index + 1}:`);
+                console.log(`     Similarity: ${(chunk.similarity * 100).toFixed(1)}%`);
+                console.log(`     Source: ${chunk.source.title}`);
+                console.log(`     URL: ${chunk.source.url || 'N/A'}`);
+                console.log(`     Content Preview: ${chunk.text.substring(0, 150)}${chunk.text.length > 150 ? '...' : ''}`);
+                console.log(`     Full Content: ${chunk.text}`);
+                console.log('');
+              });
+
+              retrievedContext = searchResults.map((chunk, index) => {
+                return `[Retrieved Knowledge ${index + 1}] (Relevance: ${(chunk.similarity * 100).toFixed(1)}%)
+Source: ${chunk.source.title}
+Content: ${chunk.text}`;
+              }).join('\n\n');
+            } else {
+              console.log('[AutoFeel Debug] ⚠️  No relevant chunks found in knowledge base');
+            }
+          } else {
+            console.log('[AutoFeel Debug] ⚠️  Failed to generate embedding');
+          }
+        } else {
+          // Use keyword-based search for providers without embedding support
+          console.log(`[AutoFeel Debug] Step 1: Provider '${llmProvider}' does not support embeddings`);
+          console.log('[AutoFeel Debug] Step 2: Using keyword-based search instead (top 3 chunks)...');
+
+          await memoryDB.init();
+          const searchResults = await memoryDB.keywordSearch(queryText, 3);
+
+          if (searchResults && searchResults.length > 0) {
+            console.log(`[AutoFeel Debug] ✅ Found ${searchResults.length} relevant chunks:\n`);
+
+            searchResults.forEach((chunk, index) => {
+              console.log(`  📄 Chunk ${index + 1}:`);
+              console.log(`     Relevance: ${(chunk.similarity * 100).toFixed(1)}%`);
+              console.log(`     Source: ${chunk.source.title}`);
+              console.log(`     URL: ${chunk.source.url || 'N/A'}`);
+              console.log(`     Content Preview: ${chunk.text.substring(0, 150)}${chunk.text.length > 150 ? '...' : ''}`);
+              console.log(`     Full Content: ${chunk.text}`);
+              console.log('');
+            });
+
+            retrievedContext = searchResults.map((chunk, index) => {
+              return `[Retrieved Knowledge ${index + 1}] (Relevance: ${(chunk.similarity * 100).toFixed(1)}%)
+Source: ${chunk.source.title}
+Content: ${chunk.text}`;
+            }).join('\n\n');
+          } else {
+            console.log('[AutoFeel Debug] ⚠️  No relevant chunks found using keyword search');
+          }
+        }
+      } catch (ragError) {
+        console.error('[AutoFeel Debug] ❌ RAG error:', ragError);
+      }
+    } else {
+      console.log('[AutoFeel Debug] ⏭️  No query text, skipping retrieval');
+    }
+
+    // ==================== Build Prompt for Single Field ====================
+    const systemPrompt = `You are a form-filling assistant. Answer the given form field question based on the user's information.
+
+Return a JSON object with "answer" and "explanation":
+{
+  "answer": "your answer here",
+  "explanation": null
+}
+
+If you cannot answer, set answer to "" and provide a brief explanation of why.`;
+
+    let userPrompt = '';
+
+    if (retrievedContext) {
+      userPrompt += `=== RELEVANT INFORMATION ===\n${retrievedContext}\n\n`;
+    } else if (savedContext) {
+      // Fallback to savedContext only if no chunks were retrieved
+      console.log('[AutoFeel Debug] No chunks retrieved, using savedContext as fallback');
+      const contextText = savedContext.llmAnalysis || savedContext.pageContent.text;
+      const truncatedContext = contextText.length > 2000
+        ? contextText.substring(0, 2000) + '...[truncated]'
+        : contextText;
+
+      userPrompt += `=== USER CONTEXT ===\n${truncatedContext}\n\n`;
+    } else {
+      console.log('[AutoFeel Debug] ⚠️  No context available (neither retrieved chunks nor savedContext)');
+    }
+
+    userPrompt += `=== QUESTION ===\n${queryText}\n\n`;
+
+    userPrompt += `Please answer this question based on the context. Be concise and relevant.`;
+
+    const requestBody = buildLLMRequestBody(llmProvider, modelName, userPrompt, systemPrompt, {
+      maxTokens: 500,
+      temperature: 0.3
+    });
+    const headers = buildLLMHeaders(llmProvider, apiKey);
+
+    const response = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        success: false,
+        error: `API request failed (${response.status}): ${errorText}`
+      };
+    }
+
+    const data = await response.json();
+    const content = extractLLMResponse(llmProvider, data);
+
+    console.log('[AutoFeel Debug] Step 3: LLM response received');
+    console.log('[AutoFeel Debug] Raw LLM output:', content);
+
+    const tokenUsage = extractTokenUsage(llmProvider, data);
+    if (tokenUsage) {
+      console.log('[AutoFeel Debug] Token usage:', tokenUsage);
+      await updateTokenUsage(llmProvider, tokenUsage);
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[AutoFeel Debug] ❌ Failed to parse JSON from LLM response');
+      return {
+        success: false,
+        error: 'LLM did not return valid JSON'
+      };
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    console.log('[AutoFeel Debug] Parsed result:', result);
+    console.log('[AutoFeel Debug] ✅ Answer:', result.answer || '(empty)');
+    if (result.explanation) {
+      console.log('[AutoFeel Debug] 💡 Explanation:', result.explanation);
+    }
+    console.log('');
+
+    return {
+      success: true,
+      data: result,
+      tokenUsage: tokenUsage
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// ==================== RAG-Enhanced Form Answer Generation (Legacy - for batch) ====================
 
 async function generateFormAnswers(formFields, savedContext, config) {
   const { llmProvider, apiKey, apiEndpoint, modelName } = config;

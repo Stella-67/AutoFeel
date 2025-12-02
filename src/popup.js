@@ -22,6 +22,8 @@ const elements = {
   openaiRequests: document.getElementById('openai-requests'),
   anthropicTokens: document.getElementById('anthropic-tokens'),
   anthropicRequests: document.getElementById('anthropic-requests'),
+  deepseekTokens: document.getElementById('deepseek-tokens'),
+  deepseekRequests: document.getElementById('deepseek-requests'),
   customTokens: document.getElementById('custom-tokens'),
   customRequests: document.getElementById('custom-requests'),
   lastUpdated: document.getElementById('last-updated')
@@ -42,6 +44,10 @@ const modelOptions = {
     { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (Most Capable)' },
     { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
     { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku (Cheapest)' }
+  ],
+  deepseek: [
+    { value: 'deepseek-chat', label: 'DeepSeek Chat (Recommended)' },
+    { value: 'deepseek-coder', label: 'DeepSeek Coder' }
   ],
   custom: [
     { value: 'custom', label: 'Custom Model (Enter below)' }
@@ -124,6 +130,10 @@ function fillDefaultValues(provider) {
       endpoint: 'https://api.anthropic.com/v1/messages',
       model: 'claude-3-5-sonnet-20241022'
     },
+    deepseek: {
+      endpoint: 'https://api.deepseek.com/v1/chat/completions',
+      model: 'deepseek-chat'
+    },
     custom: {
       endpoint: '',
       model: 'custom'
@@ -181,12 +191,14 @@ async function testAPI() {
   const apiKey = elements.apiKey.value;
   const model = getActualModelName();
 
-  // Get endpoint: use preset for OpenAI/Anthropic, or custom input
+  // Get endpoint: use preset for OpenAI/Anthropic/DeepSeek, or custom input
   let endpoint;
   if (provider === 'openai') {
     endpoint = 'https://api.openai.com/v1/chat/completions';
   } else if (provider === 'anthropic') {
     endpoint = 'https://api.anthropic.com/v1/messages';
+  } else if (provider === 'deepseek') {
+    endpoint = 'https://api.deepseek.com/v1/chat/completions';
   } else {
     endpoint = elements.apiEndpoint.value;
   }
@@ -238,12 +250,14 @@ async function saveSettings() {
   const model = getActualModelName();
   const systemPrompt = elements.systemPrompt.value;
 
-  // Get endpoint: use preset for OpenAI/Anthropic, or custom input
+  // Get endpoint: use preset for OpenAI/Anthropic/DeepSeek, or custom input
   let endpoint;
   if (provider === 'openai') {
     endpoint = 'https://api.openai.com/v1/chat/completions';
   } else if (provider === 'anthropic') {
     endpoint = 'https://api.anthropic.com/v1/messages';
+  } else if (provider === 'deepseek') {
+    endpoint = 'https://api.deepseek.com/v1/chat/completions';
   } else {
     endpoint = elements.apiEndpoint.value;
   }
@@ -299,16 +313,25 @@ async function loadTokenUsage() {
   elements.totalOutput.textContent = tokenUsage.total.outputTokens.toLocaleString();
   elements.totalTokens.textContent = tokenUsage.total.totalTokens.toLocaleString();
 
-  // Update provider stats
+  // Update provider stats with defaults for missing providers
   if (tokenUsage.byProvider) {
-    elements.openaiTokens.textContent = tokenUsage.byProvider.openai.totalTokens.toLocaleString();
-    elements.openaiRequests.textContent = tokenUsage.byProvider.openai.requestCount;
+    const defaultProviderStats = { inputTokens: 0, outputTokens: 0, totalTokens: 0, requestCount: 0 };
 
-    elements.anthropicTokens.textContent = tokenUsage.byProvider.anthropic.totalTokens.toLocaleString();
-    elements.anthropicRequests.textContent = tokenUsage.byProvider.anthropic.requestCount;
+    const openai = tokenUsage.byProvider.openai || defaultProviderStats;
+    elements.openaiTokens.textContent = openai.totalTokens.toLocaleString();
+    elements.openaiRequests.textContent = openai.requestCount;
 
-    elements.customTokens.textContent = tokenUsage.byProvider.custom.totalTokens.toLocaleString();
-    elements.customRequests.textContent = tokenUsage.byProvider.custom.requestCount;
+    const anthropic = tokenUsage.byProvider.anthropic || defaultProviderStats;
+    elements.anthropicTokens.textContent = anthropic.totalTokens.toLocaleString();
+    elements.anthropicRequests.textContent = anthropic.requestCount;
+
+    const deepseek = tokenUsage.byProvider.deepseek || defaultProviderStats;
+    elements.deepseekTokens.textContent = deepseek.totalTokens.toLocaleString();
+    elements.deepseekRequests.textContent = deepseek.requestCount;
+
+    const custom = tokenUsage.byProvider.custom || defaultProviderStats;
+    elements.customTokens.textContent = custom.totalTokens.toLocaleString();
+    elements.customRequests.textContent = custom.requestCount;
   }
 
   // Update last updated time
