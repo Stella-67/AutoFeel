@@ -858,27 +858,28 @@ async function fillFieldWithAnimation(input, answer) {
 
   await new Promise(resolve => setTimeout(resolve, 200));
 
-  // Typing animation effect
+  // Typing animation with events only at the end
   if (answer.length > 0) {
-    input.value = '';
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
-    // Type character by character for short answers
-    if (answer.length < 20) {
+    // Type character by character for short answers (visual effect only)
+    if (answer.length < 30) {
+      nativeInputValueSetter.call(input, '');
+
       for (let charIndex = 0; charIndex < answer.length; charIndex++) {
-        input.value += answer[charIndex];
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        await new Promise(resolve => setTimeout(resolve, 20));
+        nativeInputValueSetter.call(input, answer.substring(0, charIndex + 1));
+        // NO events during typing to avoid form validation conflicts
+        await new Promise(resolve => setTimeout(resolve, 30));
       }
     } else {
       // For long answers, just set directly
-      input.value = answer;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      nativeInputValueSetter.call(input, answer);
     }
-  }
 
-  // Trigger change events
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-  input.dispatchEvent(new Event('blur', { bubbles: true }));
+    // Trigger events ONLY after all characters are typed
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 
   // Success animation
   input.style.outline = '2px solid #4CAF50';
