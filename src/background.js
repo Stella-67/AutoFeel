@@ -89,8 +89,6 @@ async function handleSendToLLM() {
     const rawContent = response.content;
 
     // ==================== IMMEDIATE: Save raw content to buffer ====================
-    console.log('[AutoFeel] Step 1: Saving raw content to buffer for immediate use...');
-
     await chrome.storage.local.set({
       savedContext: {
         pageContent: rawContent,
@@ -103,14 +101,12 @@ async function handleSendToLLM() {
 
     await notifyTab(tab.id, `✅ Content saved to buffer! You can now use Alt+V to fill forms. Processing in background...`, 'success');
 
-    console.log('[AutoFeel] ✓ Raw content saved to buffer. Starting background processing...');
-    console.log('');
+    console.log('[AutoFeel] Saved to buffer. Processing in background...');
 
     // ==================== BACKGROUND PROCESSING ====================
     // Continue processing asynchronously without blocking
     (async () => {
       try {
-        console.log('[AutoFeel Background] Starting background processing...');
 
         const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName', 'systemPrompt']);
 
@@ -120,9 +116,6 @@ async function handleSendToLLM() {
         }
 
         // === Text Cleaning Pipeline ===
-
-        // Step 1: LLM Pre-Cleaning
-        console.log('[AutoFeel Background] Step 2: LLM Pre-Cleaning...');
         const preCleaningResult = await llmPreCleaning(rawContent, config);
 
         if (!preCleaningResult.success) {
@@ -130,25 +123,14 @@ async function handleSendToLLM() {
           return;
         }
 
-        // Step 2: Post-LLM Cleanup
-        console.log('[AutoFeel Background] Step 3: Post-LLM Cleanup...');
         const cleanupResult = postLLMCleanup(preCleaningResult.data);
-
-        // Step 3: Chunk Builder
-        console.log('[AutoFeel Background] Step 4: Building Chunks...');
         const chunkResult = chunkBuilder(cleanupResult, preCleaningResult.data);
-
-        // Step 4: Build Memory-Ready Data
-        console.log('[AutoFeel Background] Step 5: Finalizing...');
         const memoryReady = buildMemoryReadyData(
           chunkResult.chunks,
           rawContent,
           preCleaningResult.data,
           cleanupResult
         );
-
-        // Step 5: Build Schemas
-        console.log('[AutoFeel Background] Step 6: Building schemas...');
 
         const { docId, documentSchema } = buildDocumentSchema(
           rawContent,
@@ -163,23 +145,18 @@ async function handleSendToLLM() {
           preCleaningResult.data
         );
 
-        // Step 6: Generate Vector Embeddings (optional, only for OpenAI provider)
+        // Generate Vector Embeddings (optional, only for OpenAI provider)
         if (config.llmProvider === 'openai' || config.llmProvider === 'custom') {
-          console.log('[AutoFeel Background] Step 7: Generating embeddings for semantic search...');
-
           try {
             const chunksWithEmbeddings = await generateChunkEmbeddings(chunkSchemas, config);
             chunkSchemas = chunksWithEmbeddings;
-            console.log('[AutoFeel Background] ✓ Generated embeddings for all chunks');
+            console.log('[AutoFeel] Generated embeddings for semantic search');
           } catch (embError) {
-            console.warn('[AutoFeel Background] Failed to generate embeddings, continuing without:', embError);
+            console.warn('[AutoFeel] Failed to generate embeddings:', embError);
           }
-        } else {
-          console.log('[AutoFeel Background] Skipping embeddings (not supported for this provider)');
         }
 
         // Update savedContext with processed data
-        console.log('[AutoFeel Background] Step 8: Updating buffer with processed data...');
         await chrome.storage.local.set({
           savedContext: {
             pageContent: rawContent,
@@ -191,8 +168,6 @@ async function handleSendToLLM() {
         });
 
         // ==================== DECISION AGENT: ANALYZE & SAVE ====================
-        console.log('[AutoFeel Background] Step 9: Analyzing save strategy...');
-
         let saveResult = null;
         try {
           await memoryDB.init();
@@ -202,12 +177,10 @@ async function handleSendToLLM() {
 
           // Analyze what to do
           const decision = await decisionAgent.decide(documentSchema, chunkSchemas);
-          console.log('[AutoFeel Background] Decision:', decisionAgent.explainDecision(decision));
+          console.log('[AutoFeel] Save decision:', decisionAgent.explainDecision(decision));
 
           // Execute the decision
           saveResult = await decisionAgent.execute(decision, documentSchema, chunkSchemas);
-
-          console.log('[AutoFeel Background] Save completed:', saveResult);
         } catch (dbError) {
           console.error('[AutoFeel Background] Failed to save to database:', dbError);
           saveResult = { success: false, error: dbError.message };
@@ -325,27 +298,13 @@ async function handleAutoFillForm() {
       return;
     }
 
-    console.log('='.repeat(80));
-    console.log('[AutoFeel Debug] 🔍 OPTION+V AUTO-FILL STARTED');
-    console.log('='.repeat(80));
-    console.log(`[AutoFeel Debug] Step 1: Detected ${formFields.length} form fields:`);
-    formFields.forEach((field, index) => {
-      console.log(`  Field ${index}:`, {
-        label: field.label,
-        placeholder: field.placeholder,
-        type: field.type,
-        name: field.name
-      });
-    });
-    console.log('');
+    console.log(`[AutoFeel] Auto-fill started with ${formFields.length} fields`);
 
     // Clear filled field tracking (start fresh)
-    console.log('[AutoFeel] 🗑️🗑️🗑️ SENDING CLEAR_FILLED_FIELDS 🗑️🗑️🗑️');
     try {
-      const clearResult = await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_FILLED_FIELDS' });
-      console.log('[AutoFeel] ✓ CLEAR_FILLED_FIELDS result:', clearResult);
+      await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_FILLED_FIELDS' });
     } catch (e) {
-      console.warn('[AutoFeel] ⚠️ CLEAR_FILLED_FIELDS failed (old content script?):', e.message);
+      console.warn('[AutoFeel] Failed to clear filled fields (old content script?):', e.message);
     }
 
     await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
@@ -377,23 +336,20 @@ async function handleAutoFillForm() {
       await notifyTab(tab.id, `Filling field ${filledCount + 1}/${totalCurrent}...`, 'loading');
 
       const answer = await generateSingleFieldAnswer(field, savedContext, config);
-      console.log(`[AutoFeel] 🎯 answer.success = ${answer.success}, answer.data =`, answer.data);
 
       // Fill the field (or show hint if empty)
       if (answer.success) {
         // CRITICAL: Mark as filled FIRST to prevent re-detection
-        console.log(`[AutoFeel] 📤📤📤 SENDING MARK_AS_FILLED for ${field.id} (${field.label}) 📤📤📤`);
         try {
-          const markResult = await chrome.tabs.sendMessage(tab.id, {
+          await chrome.tabs.sendMessage(tab.id, {
             type: 'MARK_AS_FILLED',
             fieldId: field.id,
             fieldLabel: field.label,
             fieldName: field.name,  // Pass name for composite key
             fieldType: field.type   // Pass type for composite key
           });
-          console.log(`[AutoFeel] ✓ MARK_AS_FILLED result:`, markResult);
         } catch (markError) {
-          console.error(`[AutoFeel] ❌ MARK_AS_FILLED failed:`, markError);
+          console.error(`[AutoFeel] Failed to mark field as filled:`, markError);
         }
 
         // Then try to fill
@@ -433,8 +389,7 @@ async function handleAutoFillForm() {
           if (newCount !== oldCount - 1) {
             // Expected: oldCount - 1 (we just processed one)
             // If different, fields were added or removed dynamically
-            const delta = newCount - (oldCount - 1);
-            console.log(`[AutoFeel] 🔄 Remaining fields changed: ${oldCount} → ${newCount} (${delta > 0 ? '+' : ''}${delta})`);
+            console.log(`[AutoFeel] Remaining fields: ${newCount} (${newCount > oldCount - 1 ? 'added' : 'removed'} ${Math.abs(newCount - (oldCount - 1))})`);
           }
         } else {
           // No more unfilled fields detected
@@ -447,7 +402,7 @@ async function handleAutoFillForm() {
     }
 
     if (iterationCount >= MAX_ITERATIONS) {
-      console.warn('[AutoFeel] ⚠️ Reached maximum iteration limit. Stopping to prevent infinite loop.');
+      console.warn('[AutoFeel] Reached maximum iteration limit');
     }
 
     await notifyTab(tab.id, `✅ Successfully filled ${filledCount} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
@@ -474,85 +429,46 @@ async function generateSingleFieldAnswer(field, savedContext, config) {
     let retrievedContext = '';
     const queryText = `${field.label || ''} ${field.placeholder || ''}`.trim();
 
-    console.log('─'.repeat(80));
-    console.log(`[AutoFeel Debug] 📝 FIELD: "${queryText}"`);
-    if (field.options && field.options.length > 0) {
-      console.log(`[AutoFeel Debug] 📋 Field type: ${field.type} with ${field.options.length} options`);
-      console.log('[AutoFeel Debug] Available options:', field.options.map(o => o.label).join(', '));
-    }
-    console.log('─'.repeat(80));
+    console.log(`[AutoFeel] Field: "${queryText}"${field.options ? ` (${field.options.length} options)` : ''}`);
 
     if (queryText) {
       try {
         if (llmProvider === 'openai' || llmProvider === 'custom') {
           // Use semantic search with embeddings
-          console.log('[AutoFeel Debug] Step 1: Generating embedding for query...');
           const queryEmbedding = await generateEmbedding(queryText, config);
 
           if (queryEmbedding) {
-            console.log('[AutoFeel Debug] Step 2: Searching for relevant context (semantic search, top 3 chunks)...');
             await memoryDB.init();
             const searchResults = await memoryDB.semanticSearch(queryEmbedding, 3);
 
             if (searchResults && searchResults.length > 0) {
-              console.log(`[AutoFeel Debug] ✅ Found ${searchResults.length} relevant chunks:\n`);
-
-              searchResults.forEach((chunk, index) => {
-                console.log(`  📄 Chunk ${index + 1}:`);
-                console.log(`     Similarity: ${(chunk.similarity * 100).toFixed(1)}%`);
-                console.log(`     Source: ${chunk.source.title}`);
-                console.log(`     URL: ${chunk.source.url || 'N/A'}`);
-                console.log(`     Content Preview: ${chunk.text.substring(0, 150)}${chunk.text.length > 150 ? '...' : ''}`);
-                console.log(`     Full Content: ${chunk.text}`);
-                console.log('');
-              });
+              console.log(`[AutoFeel] Found ${searchResults.length} relevant chunks (semantic search)`);
 
               retrievedContext = searchResults.map((chunk, index) => {
                 return `[Retrieved Knowledge ${index + 1}] (Relevance: ${(chunk.similarity * 100).toFixed(1)}%)
 Source: ${chunk.source.title}
 Content: ${chunk.text}`;
               }).join('\n\n');
-            } else {
-              console.log('[AutoFeel Debug] ⚠️  No relevant chunks found in knowledge base');
             }
-          } else {
-            console.log('[AutoFeel Debug] ⚠️  Failed to generate embedding');
           }
         } else {
           // Use keyword-based search for providers without embedding support
-          console.log(`[AutoFeel Debug] Step 1: Provider '${llmProvider}' does not support embeddings`);
-          console.log('[AutoFeel Debug] Step 2: Using keyword-based search instead (top 3 chunks)...');
-
           await memoryDB.init();
           const searchResults = await memoryDB.keywordSearch(queryText, 3);
 
           if (searchResults && searchResults.length > 0) {
-            console.log(`[AutoFeel Debug] ✅ Found ${searchResults.length} relevant chunks:\n`);
-
-            searchResults.forEach((chunk, index) => {
-              console.log(`  📄 Chunk ${index + 1}:`);
-              console.log(`     Relevance: ${(chunk.similarity * 100).toFixed(1)}%`);
-              console.log(`     Source: ${chunk.source.title}`);
-              console.log(`     URL: ${chunk.source.url || 'N/A'}`);
-              console.log(`     Content Preview: ${chunk.text.substring(0, 150)}${chunk.text.length > 150 ? '...' : ''}`);
-              console.log(`     Full Content: ${chunk.text}`);
-              console.log('');
-            });
+            console.log(`[AutoFeel] Found ${searchResults.length} relevant chunks (keyword search)`);
 
             retrievedContext = searchResults.map((chunk, index) => {
               return `[Retrieved Knowledge ${index + 1}] (Relevance: ${(chunk.similarity * 100).toFixed(1)}%)
 Source: ${chunk.source.title}
 Content: ${chunk.text}`;
             }).join('\n\n');
-          } else {
-            console.log('[AutoFeel Debug] ⚠️  No relevant chunks found using keyword search');
           }
         }
       } catch (ragError) {
-        console.error('[AutoFeel Debug] ❌ RAG error:', ragError);
+        console.error('[AutoFeel] RAG error:', ragError);
       }
-    } else {
-      console.log('[AutoFeel Debug] ⏭️  No query text, skipping retrieval');
     }
 
     // ==================== Build Prompt for Single Field ====================
@@ -580,21 +496,17 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
       userPrompt += `=== RELEVANT INFORMATION ===\n${retrievedContext}\n\n`;
     } else if (savedContext) {
       // Fallback to savedContext only if no chunks were retrieved
-      console.log('[AutoFeel Debug] No chunks retrieved, using savedContext as fallback');
       const contextText = savedContext.llmAnalysis || savedContext.pageContent.text;
       const truncatedContext = contextText.length > 2000
         ? contextText.substring(0, 2000) + '...[truncated]'
         : contextText;
 
       userPrompt += `=== USER CONTEXT ===\n${truncatedContext}\n\n`;
-    } else {
-      console.log('[AutoFeel Debug] ⚠️  No context available (neither retrieved chunks nor savedContext)');
     }
 
     userPrompt += `=== QUESTION ===\n${queryText}\n\n`;
 
     // If field has options (radio/select), include them
-    console.log('[AutoFeel Debug] Building prompt - field has options?', !!field.options, 'Count:', field.options?.length || 0);
     if (field.options && field.options.length > 0) {
       userPrompt += `=== AVAILABLE OPTIONS ===\n`;
       field.options.forEach((option, index) => {
@@ -634,18 +546,14 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
     const data = await response.json();
     const content = extractLLMResponse(llmProvider, data);
 
-    console.log('[AutoFeel Debug] Step 3: LLM response received');
-    console.log('[AutoFeel Debug] Raw LLM output:', content);
-
     const tokenUsage = extractTokenUsage(llmProvider, data);
     if (tokenUsage) {
-      console.log('[AutoFeel Debug] Token usage:', tokenUsage);
       await updateTokenUsage(llmProvider, tokenUsage);
     }
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      console.error('[AutoFeel Debug] ❌ Failed to parse JSON from LLM response');
+      console.error('[AutoFeel] Failed to parse JSON from LLM response');
       return {
         success: false,
         error: 'LLM did not return valid JSON'
@@ -653,10 +561,8 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
     }
 
     const result = JSON.parse(jsonMatch[0]);
-    console.log('[AutoFeel Debug] Parsed result:', result);
 
     // ==================== Validate and Fix Option Fields ====================
-    console.log('[AutoFeel Debug] Field has options?', !!field.options, 'Count:', field.options?.length || 0);
 
     // If this is an option field (select/radio), ensure answer is a valid number
     if (field.options && field.options.length > 0 && result.answer) {
