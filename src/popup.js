@@ -155,7 +155,8 @@ function updateFormVisibility() {
   const show = provider !== '';
 
   elements.apiKeySection.style.display = show ? 'block' : 'none';
-  elements.customEndpointSection.style.display = show ? 'block' : 'none';
+  // Only show endpoint input for custom provider
+  elements.customEndpointSection.style.display = (provider === 'custom') ? 'block' : 'none';
   elements.modelSection.style.display = show ? 'block' : 'none';
   elements.promptSection.style.display = show ? 'block' : 'none';
 
@@ -178,8 +179,17 @@ function showStatus(message, type = 'info') {
 async function testAPI() {
   const provider = elements.llmProvider.value;
   const apiKey = elements.apiKey.value;
-  const endpoint = elements.apiEndpoint.value;
   const model = getActualModelName();
+
+  // Get endpoint: use preset for OpenAI/Anthropic, or custom input
+  let endpoint;
+  if (provider === 'openai') {
+    endpoint = 'https://api.openai.com/v1/chat/completions';
+  } else if (provider === 'anthropic') {
+    endpoint = 'https://api.anthropic.com/v1/messages';
+  } else {
+    endpoint = elements.apiEndpoint.value;
+  }
 
   if (!apiKey) {
     showStatus('Please enter API Key', 'error');
@@ -225,9 +235,18 @@ async function testAPI() {
 async function saveSettings() {
   const provider = elements.llmProvider.value;
   const apiKey = elements.apiKey.value;
-  const endpoint = elements.apiEndpoint.value;
   const model = getActualModelName();
   const systemPrompt = elements.systemPrompt.value;
+
+  // Get endpoint: use preset for OpenAI/Anthropic, or custom input
+  let endpoint;
+  if (provider === 'openai') {
+    endpoint = 'https://api.openai.com/v1/chat/completions';
+  } else if (provider === 'anthropic') {
+    endpoint = 'https://api.anthropic.com/v1/messages';
+  } else {
+    endpoint = elements.apiEndpoint.value;
+  }
 
   if (!apiKey) {
     showStatus('Please enter API Key', 'error');

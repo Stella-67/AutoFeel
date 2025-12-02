@@ -153,3 +153,53 @@ function parseRobustJSON(jsonString, fallbackText) {
     }
   }
 }
+
+// ==================== Utils Object for HTML Pages ====================
+// These functions are used by manager.html and other UI pages
+
+const Utils = {
+  /**
+   * Escape HTML to prevent XSS
+   * @param {string} str - String to escape
+   * @returns {string} Escaped string
+   */
+  escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  },
+
+  /**
+   * Capitalize first letter of a string
+   * @param {string} str - String to capitalize
+   * @returns {string} Capitalized string
+   */
+  capitalize(str) {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  },
+
+  /**
+   * Format date to readable string
+   * @param {string|Date} date - Date to format
+   * @returns {string} Formatted date string
+   */
+  formatDate(date) {
+    if (!date) return '-';
+    const d = new Date(date);
+    return d.toLocaleString();
+  },
+
+  /**
+   * Truncate text to specified length
+   * @param {string} text - Text to truncate
+   * @param {number} maxLength - Maximum length
+   * @returns {string} Truncated text
+   */
+  truncate(text, maxLength = 100) {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+  }
+};
+
