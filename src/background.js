@@ -156,6 +156,10 @@ async function handleSendToLLM() {
       await memoryDB.init();
 
       // Check for existing document with same URL
+      console.log('[AutoFeel] Searching for existing document...');
+      console.log('[AutoFeel] Document URL:', documentSchema.url);
+      console.log('[AutoFeel] Normalized URL:', memoryDB.normalizeUrl(documentSchema.url));
+
       const existingDoc = await memoryDB.findDocumentByUrl(documentSchema.url);
 
       // Prepare context for reasoning
@@ -166,7 +170,9 @@ async function handleSendToLLM() {
       };
 
       if (existingDoc) {
-        console.log('[AutoFeel] Found existing document:', existingDoc.doc_id);
+        console.log('[AutoFeel] ✅ Found existing document:', existingDoc.doc_id);
+        console.log('[AutoFeel] Existing doc URL:', existingDoc.url);
+        console.log('[AutoFeel] Existing doc normalized:', memoryDB.normalizeUrl(existingDoc.url));
 
         // Check if document should be updated
         const updateCheck = memoryDB.shouldUpdateDocument(existingDoc, documentSchema);
@@ -174,6 +180,18 @@ async function handleSendToLLM() {
         reasoningContext.similarity = updateCheck.textSimilarity;
 
         console.log('[AutoFeel] Update check:', updateCheck);
+      } else {
+        console.log('[AutoFeel] ❌ No existing document found - will create new');
+
+        // Debug: show all documents in DB
+        const allDocs = await memoryDB.getAllDocuments({ limit: 5 });
+        console.log('[AutoFeel] Total documents in DB:', allDocs.length);
+        if (allDocs.length > 0) {
+          console.log('[AutoFeel] Sample URLs in DB:', allDocs.slice(0, 3).map(d => ({
+            url: d.url,
+            normalized: memoryDB.normalizeUrl(d.url)
+          })));
+        }
       }
 
       // Let reasoning agent decide what to do
@@ -1082,6 +1100,101 @@ async function generateChunkEmbeddings(chunks, config) {
 // ==================== Text Cleaning Pipeline ====================
 
 /**
+ * Helper: Robust JSON parser with error recovery
+ * Attempts multiple strategies to parse potentially malformed JSON from LLM
+ */
+function parseRobustJSON(jsonString, fallbackText) {
+  const createFallback = () => ({
+    structuredText: fallbackText || '',
+    language: 'en',
+    mainTopics: [],
+    keyPoints: [],
+    entities: { people: [], organizations: [], locations: [], dates: [] },
+    semanticChunks: []
+  });
+
+  try {
+    // Strategy 1: Direct parse
+    return JSON.parse(jsonString);
+  } catch (e1) {
+    console.warn('[AutoFeel] Direct JSON parse failed, trying cleanup strategies...');
+
+    try {
+      // Strategy 2: Clean common issues
+      let cleaned = jsonString
+        // Remove trailing commas before closing brackets/braces
+        .replace(/,(\s*[}\]])/g, '$1')
+        // Fix unescaped newlines in strings
+        .replace(/:\s*"([^"]*)\n([^"]*)"(?=\s*[,}])/g, (match, p1, p2) => {
+          return `: "${p1}\\n${p2}"`;
+        })
+        // Remove any text after the final closing brace
+        .replace(/\}[^}]*$/, '}')
+        // Remove control characters except newlines and tabs
+        .replace(/[\x00-\x09\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+
+      return JSON.parse(cleaned);
+    } catch (e2) {
+      console.warn('[AutoFeel] Cleanup strategy failed, trying truncation recovery...');
+
+      try {
+        // Strategy 3: Try to salvage truncated JSON
+        // Find the last complete key-value pair
+        let truncated = jsonString;
+
+        // If it ends with incomplete array, close it
+        if (truncated.match(/\[[^\]]*$/)) {
+          truncated = truncated.replace(/,?\s*[^,\]]*$/, ']');
+        }
+
+        // If it ends with incomplete object, close it
+        if (truncated.match(/\{[^}]*$/)) {
+          truncated = truncated.replace(/,?\s*[^,}]*$/, '}');
+        }
+
+        // Ensure proper closing braces
+        const openBraces = (truncated.match(/\{/g) || []).length;
+        const closeBraces = (truncated.match(/\}/g) || []).length;
+        const openBrackets = (truncated.match(/\[/g) || []).length;
+        const closeBrackets = (truncated.match(/\]/g) || []).length;
+
+        truncated += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+        truncated += '}'.repeat(Math.max(0, openBraces - closeBraces));
+
+        return JSON.parse(truncated);
+      } catch (e3) {
+        console.warn('[AutoFeel] Truncation recovery failed, trying minimal extraction...');
+
+        try {
+          // Strategy 4: Extract only the structuredText field if possible
+          const textMatch = jsonString.match(/"structuredText"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+          if (textMatch) {
+            const extracted = textMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            console.log('[AutoFeel] Successfully extracted structuredText field');
+            return {
+              structuredText: extracted,
+              language: 'en',
+              mainTopics: [],
+              keyPoints: [],
+              entities: { people: [], organizations: [], locations: [], dates: [] },
+              semanticChunks: []
+            };
+          }
+        } catch (e4) {
+          console.error('[AutoFeel] Minimal extraction failed');
+        }
+
+        // Strategy 5: Complete fallback
+        console.error('[AutoFeel] All JSON parsing strategies failed, using fallback');
+        console.error('[AutoFeel] Original error:', e1.message);
+        console.error('[AutoFeel] JSON string preview:', jsonString.substring(0, 500) + '...');
+        return createFallback();
+      }
+    }
+  }
+}
+
+/**
  * Step 1: LLM Pre-Cleaning - Structured extraction using LLM
  */
 async function llmPreCleaning(rawContent, config) {
@@ -1183,7 +1296,8 @@ Extract the main content, identify key topics and entities, divide into semantic
       };
     }
 
-    const result = JSON.parse(jsonMatch[0]);
+    // Robust JSON parsing with error recovery
+    const result = parseRobustJSON(jsonMatch[0], rawContent.text);
     console.log('[AutoFeel] LLM Pre-Cleaning result:', result);
 
     return {

@@ -81,16 +81,17 @@ class MemoryDB {
       const transaction = this.db.transaction([DOCUMENTS_STORE], 'readwrite');
       const store = transaction.objectStore(DOCUMENTS_STORE);
 
-      const request = store.put(documentSchema);
+      store.put(documentSchema);
 
-      request.onsuccess = () => {
+      // Wait for transaction to complete (data is committed to disk)
+      transaction.oncomplete = () => {
         console.log('[AutoFeel DB] Document saved:', documentSchema.doc_id);
         resolve(documentSchema.doc_id);
       };
 
-      request.onerror = () => {
-        console.error('[AutoFeel DB] Failed to save document:', request.error);
-        reject(request.error);
+      transaction.onerror = () => {
+        console.error('[AutoFeel DB] Failed to save document:', transaction.error);
+        reject(transaction.error);
       };
     });
   }
@@ -146,38 +147,37 @@ class MemoryDB {
   async getAllDocuments(options = {}) {
     if (!this.db) await this.init();
 
-    const { limit = 50, offset = 0, sortBy = 'created_at', order = 'desc' } = options;
+    const { limit = 50, offset = 0, sortBy = 'captured_at', order = 'desc' } = options;
 
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction([DOCUMENTS_STORE], 'readonly');
       const store = transaction.objectStore(DOCUMENTS_STORE);
-      const index = store.index(sortBy);
+      const request = store.getAll();
 
-      const direction = order === 'desc' ? 'prev' : 'next';
-      const request = index.openCursor(null, direction);
+      request.onsuccess = () => {
+        let results = request.result || [];
 
-      const results = [];
-      let skipped = 0;
-
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-
-        if (cursor) {
-          if (skipped < offset) {
-            skipped++;
-            cursor.continue();
-          } else if (results.length < limit) {
-            results.push(cursor.value);
-            cursor.continue();
+        // Sort results
+        results.sort((a, b) => {
+          const aVal = a[sortBy];
+          const bVal = b[sortBy];
+          if (order === 'desc') {
+            return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
           } else {
-            resolve(results);
+            return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
           }
-        } else {
-          resolve(results);
-        }
+        });
+
+        // Apply pagination
+        results = results.slice(offset, offset + limit);
+
+        resolve(results);
       };
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        console.error('[AutoFeel DB] Failed to get documents:', request.error);
+        reject(request.error);
+      };
     });
   }
 
@@ -233,6 +233,7 @@ class MemoryDB {
    * Removes query params, hash, trailing slashes, and converts to lowercase
    */
   normalizeUrl(url) {
+    if (!url) return '';
     try {
       const urlObj = new URL(url);
       // Keep protocol + hostname + pathname, remove query and hash
@@ -242,7 +243,7 @@ class MemoryDB {
       return normalized.toLowerCase();
     } catch (error) {
       // If URL parsing fails, return original URL in lowercase
-      return url.toLowerCase();
+      return typeof url === 'string' ? url.toLowerCase() : '';
     }
   }
 
