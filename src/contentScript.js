@@ -1146,109 +1146,6 @@ async function fillRadioField(radio, answer) {
   }
 }
 
-async function fillFormFields(answers) {
-  console.log('[AutoFeel] Starting sequential form filling with animations...');
-  console.log('[AutoFeel] Answers to fill:', JSON.stringify(answers, null, 2));
-  console.log(`[AutoFeel] Number of fields to fill: ${Object.keys(answers).length}`);
-
-  let filledCount = 0;
-  let notFoundCount = 0;
-
-  const fieldIds = Object.keys(answers);
-
-  // Fill fields one by one with animation
-  for (let i = 0; i < fieldIds.length; i++) {
-    const fieldId = fieldIds[i];
-    const input = document.querySelector(`[data-autofeel-id="${fieldId}"]`);
-
-    if (!input) {
-      console.warn(`[AutoFeel] ✗ Field ${fieldId} not found in DOM`);
-      notFoundCount++;
-      continue;
-    }
-
-    // Handle both old format (string) and new format (object with answer and explanation)
-    const fieldData = answers[fieldId];
-    const answer = typeof fieldData === 'string' ? fieldData : fieldData.answer;
-    const explanation = typeof fieldData === 'object' ? fieldData.explanation : null;
-
-    // Handle empty answers with a hint
-    if (!answer || answer.trim() === '') {
-      console.log(`[AutoFeel] ⏭️ Skipping ${fieldId} (empty answer, showing hint)`);
-
-      // Use the dedicated function to show hint
-      await showEmptyFieldHint(input, fieldId, explanation);
-
-      // Brief pause before next field
-      if (i < fieldIds.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 400));
-      }
-
-      continue;
-    }
-
-    console.log(`[AutoFeel] [${i + 1}/${fieldIds.length}] Filling ${fieldId} with: "${answer.substring(0, 50)}${answer.length > 50 ? '...' : ''}"`);
-
-    // Scroll to field
-    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-    // Wait for scroll
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    // Add focus ring animation
-    input.style.transition = 'all 0.3s ease';
-    input.style.outline = '3px solid #4CAF50';
-    input.style.outlineOffset = '2px';
-    input.focus();
-
-    await new Promise(resolve => setTimeout(resolve, 200));
-
-    // Typing animation effect
-    if (answer.length > 0) {
-      input.value = '';
-
-      // Type character by character for short answers (< 20 chars)
-      if (answer.length < 20) {
-        for (let charIndex = 0; charIndex < answer.length; charIndex++) {
-          input.value += answer[charIndex];
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise(resolve => setTimeout(resolve, 20)); // 20ms per character
-        }
-      } else {
-        // For long answers, just set directly
-        input.value = answer;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    }
-
-    // Trigger change events
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new Event('blur', { bubbles: true }));
-
-    // Success animation
-    input.style.outline = '3px solid #4CAF50';
-    input.style.backgroundColor = '#e8f5e9';
-
-    await new Promise(resolve => setTimeout(resolve, 400));
-
-    // Fade out animation
-    input.style.outline = 'none';
-    input.style.backgroundColor = '';
-
-    filledCount++;
-
-    // Brief pause before next field
-    if (i < fieldIds.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-  }
-
-  console.log('='.repeat(80));
-  console.log(`[AutoFeel] ✅ Form filling complete!`);
-  console.log(`[AutoFeel] Summary: ${filledCount} fields filled, ${notFoundCount} fields not found`);
-  console.log('='.repeat(80));
-}
-
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === 'GET_PAGE_CONTENT') {
     // Handle async getPageContent
@@ -1279,20 +1176,6 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       sendResponse({ success: false, error: error.message });
     }
     return true;
-  }
-
-  if (request.type === 'FILL_FORM') {
-    // Handle async form filling with animations (batch mode)
-    (async () => {
-      try {
-        await fillFormFields(request.answers);
-        sendResponse({ success: true });
-      } catch (error) {
-        console.error('[AutoFeel] Error filling form:', error);
-        sendResponse({ success: false, error: error.message });
-      }
-    })();
-    return true; // Keep message channel open for async response
   }
 
   if (request.type === 'CLEAR_FILLED_FIELDS') {

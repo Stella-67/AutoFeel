@@ -257,28 +257,7 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
       }
     }
 
-    // For searchable select (Workday-style), try to extract options
-    const isSearchableSelect =
-      input.dataset.uxiWidgetType === 'selectinput' ||
-      (input.getAttribute('placeholder') === 'Search' && input.getAttribute('autocomplete') === 'off');
-
-    if (isSearchableSelect) {
-      // Check if options are already visible (previously opened)
-      let optionElements = Array.from(document.querySelectorAll('[data-automation-id="promptOption"]'));
-
-      if (optionElements.length > 0) {
-        const options = optionElements
-          .map(opt => ({
-            label: opt.textContent.trim(),
-            value: opt.getAttribute('data-automation-label') || opt.textContent.trim()
-          }))
-          .filter(opt => opt.label.length > 0);
-
-        if (options.length > 0) {
-          fieldInfo.options = options;
-        }
-      }
-    }
+    // TODO: Refactor dropdown option detection
 
     // Skip button-based selects without a meaningful label (likely navigation/action buttons, not form controls)
     if (fieldInfo.type === 'button-select' && (!label || label.length === 0)) {
