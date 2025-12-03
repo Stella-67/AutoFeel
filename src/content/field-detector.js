@@ -357,22 +357,97 @@ async function detectDynamicDropdownOptions(fieldId) {
     // Wait for dropdown to appear and options to load
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // Find visible options using multiple selectors
-    let optionElements = [];
+    // Find the listbox container for scrolling
+    const listbox = document.querySelector('[role="listbox"]');
 
-    // Try Workday-style options first
-    optionElements = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"]'));
+    // Collect all unique options (for virtual scrolling)
+    const allOptions = new Map(); // Use Map to track unique options by text
 
-    // If no Workday options found, try standard ARIA listbox pattern
-    if (optionElements.length === 0) {
-      optionElements = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] > div, [role="listbox"] > li'));
+    // Helper function to collect currently visible options
+    function collectVisibleOptions() {
+      let optionEls = [];
+
+      // Try Workday-style options first
+      optionEls = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"]'));
+
+      // If no Workday options found, try standard ARIA listbox pattern
+      if (optionEls.length === 0) {
+        optionEls = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] > div, [role="listbox"] > li'));
+      }
+
+      // Filter to visible options only
+      optionEls = optionEls.filter(opt => {
+        const style = window.getComputedStyle(opt);
+        return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+      });
+
+      // Add to allOptions map (deduplicate by text)
+      optionEls.forEach(opt => {
+        const text = opt.textContent.trim();
+        if (text && !allOptions.has(text)) {
+          allOptions.set(text, opt);
+        }
+      });
+
+      return optionEls.length;
     }
 
-    // Filter to visible options only
-    optionElements = optionElements.filter(opt => {
-      const style = window.getComputedStyle(opt);
-      return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
-    });
+    // Collect initial visible options
+    collectVisibleOptions();
+    const initialCount = allOptions.size;
+    console.log(`[AutoFeel] Initial options: ${initialCount}`);
+
+    // Progressive scrolling to load all options (for virtual scrolling)
+    if (listbox) {
+      const scrollHeight = listbox.scrollHeight;
+      const clientHeight = listbox.clientHeight;
+
+      if (scrollHeight > clientHeight) {
+        console.log(`[AutoFeel] Progressive scrolling to load all options...`);
+
+        const scrollStep = clientHeight * 0.8; // Scroll 80% of visible height each time
+        let currentScroll = 0;
+        let stableCount = 0; // Track how many times count didn't change
+
+        while (currentScroll < scrollHeight && stableCount < 3) {
+          const previousCount = allOptions.size;
+
+          // Scroll down
+          currentScroll += scrollStep;
+          listbox.scrollTop = currentScroll;
+
+          // Wait for new options to render
+          await new Promise(resolve => setTimeout(resolve, 200));
+
+          // Collect newly visible options
+          const visibleCount = collectVisibleOptions();
+          const newCount = allOptions.size;
+
+          console.log(`[AutoFeel] Scrolled to ${currentScroll}px: ${newCount} total options (${visibleCount} visible)`);
+
+          // Check if we found new options
+          if (newCount === previousCount) {
+            stableCount++;
+          } else {
+            stableCount = 0; // Reset if we found new options
+          }
+
+          // Update scrollHeight in case it changed
+          if (listbox.scrollHeight !== scrollHeight) {
+            break; // Scroll height changed, likely loaded all
+          }
+        }
+
+        // Scroll back to top
+        listbox.scrollTop = 0;
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        console.log(`[AutoFeel] Scrolling complete. Found ${allOptions.size} unique options (initial: ${initialCount})`);
+      }
+    }
+
+    // Convert Map to array of elements
+    const optionElements = Array.from(allOptions.values());
 
     // Extract option data
     const options = optionElements.map((opt, index) => {

@@ -33,6 +33,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     })();
     return true; // Keep message channel open for async response
   }
+
+  if (message.type === 'FILL_SINGLE_FIELD_BY_CLICK') {
+    // Handle Option+Click to fill a single field
+    (async () => {
+      try {
+        await handleFillSingleFieldByClick(message.fieldId);
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
 });
 
 // ==================== Command Listeners ====================
@@ -551,11 +567,24 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     userPrompt += `=== QUESTION ===\n${queryText}\n\n`;
 
+    // Show current value if field already has a value
+    if (field.value && field.value.trim().length > 0) {
+      userPrompt += `=== CURRENT VALUE ===\n`;
+      userPrompt += `This field currently has value: "${field.value}"\n`;
+      userPrompt += `If this value is correct based on the context, you can keep it by returning the corresponding option number.\n`;
+      userPrompt += `If it needs to be changed, select a different option.\n\n`;
+    }
+
     // If field has options (radio/select), include them
     if (field.options && field.options.length > 0) {
       userPrompt += `=== AVAILABLE OPTIONS ===\n`;
       field.options.forEach((option, index) => {
-        userPrompt += `${index + 1}. ${option.label}\n`;
+        const isCurrent = field.value && (
+          option.label.includes(field.value) ||
+          field.value.includes(option.label) ||
+          option.value === field.value
+        );
+        userPrompt += `${index + 1}. ${option.label}${isCurrent ? ' ⭐ (CURRENT)' : ''}\n`;
       });
       userPrompt += `\n`;
       userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
@@ -651,6 +680,133 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
       success: false,
       error: error.message
     };
+  }
+}
+
+// ==================== Handle Fill Single Field By Click (Option+Click) ====================
+
+async function handleFillSingleFieldByClick(fieldId) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab) {
+      console.error('[AutoFeel] No active tab found');
+      return;
+    }
+
+    // Check if page is accessible
+    if (tab.url && (
+      tab.url.startsWith('chrome://') ||
+      tab.url.startsWith('about:') ||
+      tab.url.startsWith('edge://') ||
+      tab.url.startsWith('chrome-extension://') ||
+      tab.url.startsWith('file://')
+    )) {
+      console.error('[AutoFeel] Cannot run on special pages:', tab.url);
+      return;
+    }
+
+    console.log(`[AutoFeel] Option+Click: Filling field ${fieldId}`);
+
+    await notifyTab(tab.id, 'Analyzing clicked field...', 'loading');
+
+    // Get saved context
+    const { savedContext } = await chrome.storage.local.get(['savedContext']);
+
+    if (!savedContext) {
+      await notifyTab(tab.id, 'No saved context. Use Alt+C first to save your information.', 'error');
+      console.error('[AutoFeel] No saved context found. Please use Alt+C first.');
+      return;
+    }
+
+    // Detect the single clicked field
+    let detectionResult;
+    try {
+      detectionResult = await chrome.tabs.sendMessage(tab.id, {
+        type: 'DETECT_FORM_FIELDS',
+        onlyUnfilled: false  // Detect all fields to find the clicked one
+      });
+    } catch (error) {
+      console.error('[AutoFeel] Failed to detect field:', error);
+      await notifyTab(tab.id, 'Failed to detect field. Please refresh and try again.', 'error');
+      return;
+    }
+
+    if (!detectionResult || !detectionResult.success) {
+      await notifyTab(tab.id, 'Failed to detect field', 'error');
+      return;
+    }
+
+    // Find the clicked field by ID
+    const field = detectionResult.fields.find(f => f.id === fieldId);
+
+    if (!field) {
+      console.error('[AutoFeel] Clicked field not found in detection results');
+      await notifyTab(tab.id, 'Field not found. Please try again.', 'error');
+      return;
+    }
+
+    console.log(`[AutoFeel] Found clicked field: "${field.label}" (${field.type})`);
+
+    // Get LLM config
+    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
+
+    if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
+      await notifyTab(tab.id, 'Please configure LLM API in extension settings', 'error');
+      return;
+    }
+
+    await notifyTab(tab.id, `Generating answer for "${field.label}"...`, 'loading');
+
+    // Generate answer for this single field
+    const answer = await generateSingleFieldAnswer(field, savedContext, config);
+
+    if (!answer.success) {
+      await notifyTab(tab.id, `Failed to generate answer: ${answer.error}`, 'error');
+      return;
+    }
+
+    // Convert numeric index to option text for dynamic dropdowns
+    let answerToFill = answer.data;
+    if (field.options && field.options.length > 0 && answer.data.answer) {
+      const answerNum = parseInt(answer.data.answer);
+      if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
+        if (field.isDynamicDropdown || field.type === 'button-select') {
+          const optionText = field.options[answerNum - 1].label;
+          console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
+          answerToFill = {
+            answer: optionText,
+            explanation: answer.data.explanation
+          };
+        }
+      }
+    }
+
+    // Fill the field
+    const fillResult = await chrome.tabs.sendMessage(tab.id, {
+      type: 'FILL_SINGLE_FIELD',
+      fieldId: field.id,
+      answer: answerToFill
+    });
+
+    if (fillResult && fillResult.success) {
+      const tokenInfo = answer.tokenUsage ? ` (${answer.tokenUsage.totalTokens} tokens)` : '';
+      await notifyTab(tab.id, `✅ Filled "${field.label}"${tokenInfo}`, 'success');
+      console.log(`[AutoFeel] Successfully filled field "${field.label}"`);
+    } else {
+      await notifyTab(tab.id, 'Failed to fill field', 'error');
+    }
+
+  } catch (error) {
+    console.error('[AutoFeel] Error in handleFillSingleFieldByClick:', error);
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) {
+        await notifyTab(tab.id, `Error: ${error.message}`, 'error');
+      }
+    } catch (e) {
+      console.error('[AutoFeel] Failed to show error notification:', e);
+    }
   }
 }
 

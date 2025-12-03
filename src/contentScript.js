@@ -1217,3 +1217,91 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 // Notification function is now defined in src/content/notifications.js
+
+// ==================== Option + Click to Fill Single Field ====================
+
+// Add click listener for Option+Click to fill individual fields
+document.addEventListener('click', async (event) => {
+  // Check if Option/Alt key is pressed
+  if (!event.altKey) {
+    return;
+  }
+
+  let target = event.target;
+
+  // Helper function to check if element is a form field
+  function isFormFieldElement(element) {
+    if (!element || !element.tagName) return false;
+
+    const tag = element.tagName;
+
+    return (
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      (tag === 'BUTTON' && element.getAttribute('aria-haspopup') === 'listbox')
+    );
+  }
+
+  // Try to find the actual form field
+  // 1. Check clicked element
+  // 2. Check if clicked on label - find associated input
+  // 3. Check parent elements (up to 3 levels)
+  let formField = null;
+
+  if (isFormFieldElement(target)) {
+    formField = target;
+  } else if (target.tagName === 'LABEL') {
+    // Clicked on a label - find the associated input
+    if (target.htmlFor) {
+      formField = document.getElementById(target.htmlFor);
+    } else {
+      // Label wraps input
+      formField = target.querySelector('input, textarea, select, button');
+    }
+  } else {
+    // Try parent elements (for custom radio/checkbox containers)
+    let parent = target.parentElement;
+    let depth = 0;
+    while (parent && depth < 3) {
+      const input = parent.querySelector('input, textarea, select, button');
+      if (input && isFormFieldElement(input)) {
+        formField = input;
+        break;
+      }
+      parent = parent.parentElement;
+      depth++;
+    }
+  }
+
+  if (!formField) {
+    console.log('[AutoFeel] Option+Click: Not a form field, ignoring');
+    return;
+  }
+
+  // Prevent default behavior
+  event.preventDefault();
+  event.stopPropagation();
+
+  console.log('[AutoFeel] Option+Click detected on field:', formField);
+
+  // Check if field already has autofeel-id
+  let fieldId = formField.dataset.autofeelId;
+
+  if (!fieldId) {
+    // Field not yet detected, assign a temporary ID
+    fieldId = `temp_${Date.now()}`;
+    formField.dataset.autofeelId = fieldId;
+    console.log('[AutoFeel] Assigned temporary ID:', fieldId);
+  }
+
+  // Send message to background to fill this single field
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'FILL_SINGLE_FIELD_BY_CLICK',
+      fieldId: fieldId
+    });
+  } catch (error) {
+    console.error('[AutoFeel] Error sending fill request:', error);
+  }
+}, true); // Use capture phase to intercept before other handlers
