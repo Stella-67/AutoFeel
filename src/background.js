@@ -353,10 +353,27 @@ async function handleAutoFillForm() {
         }
 
         // Then try to fill
+        // Convert numeric index to option text for dynamic dropdowns
+        let answerToFill = answer.data;
+        if (field.options && field.options.length > 0 && answer.data.answer) {
+          const answerNum = parseInt(answer.data.answer);
+          if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
+            // For dynamic dropdowns (searchable/button select), convert to option text
+            if (field.isDynamicDropdown || field.type === 'button-select') {
+              const optionText = field.options[answerNum - 1].label;
+              console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
+              answerToFill = {
+                answer: optionText,
+                explanation: answer.data.explanation
+              };
+            }
+          }
+        }
+
         const fillResult = await chrome.tabs.sendMessage(tab.id, {
           type: 'FILL_SINGLE_FIELD',
           fieldId: field.id,
-          answer: answer.data
+          answer: answerToFill
         });
 
         if (fillResult && fillResult.success) {
@@ -471,6 +488,30 @@ Content: ${chunk.text}`;
       }
     }
 
+    // ==================== Detect Dynamic Dropdown Options ====================
+    // If this is a dynamic dropdown without options, detect them now
+    if (field.isDynamicDropdown && (!field.options || field.options.length === 0)) {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) {
+          console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${field.id}`);
+          const response = await chrome.tabs.sendMessage(tab.id, {
+            type: 'DETECT_DROPDOWN_OPTIONS',
+            fieldId: field.id
+          });
+
+          if (response && response.success && response.options && response.options.length > 0) {
+            field.options = response.options;
+            console.log(`[AutoFeel] ✓ Detected ${field.options.length} options for ${field.id}`);
+          } else {
+            console.warn(`[AutoFeel] ⚠️ Failed to detect options for ${field.id}`);
+          }
+        }
+      } catch (detectError) {
+        console.error('[AutoFeel] Error detecting dropdown options:', detectError);
+      }
+    }
+
     // ==================== Build Prompt for Single Field ====================
     const systemPrompt = `You are an intelligent form-filling assistant. Your task is to understand the question, analyze the user's information, and use logical reasoning to provide the most appropriate answer.
 
@@ -486,7 +527,11 @@ Return a JSON object with "answer" and "explanation":
   "explanation": null
 }
 
-CRITICAL: If the question has numbered options (1, 2, 3...), you MUST return ONLY the number in the "answer" field, NOT the option text.
+CRITICAL RULES:
+- If the question has OPTIONS (numbered 1, 2, 3...), you MUST return ONLY the option number (e.g., "2"), NEVER the option text
+- You MUST select one of the provided options OR return empty string "" if none fit
+- For questions with options, you are NOT allowed to create your own answer
+- If you cannot find relevant information to choose an option, set answer to "" and explain why
 
 If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
@@ -513,12 +558,14 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
         userPrompt += `${index + 1}. ${option.label}\n`;
       });
       userPrompt += `\n`;
-      userPrompt += `CRITICAL REQUIREMENT:\n`;
+      userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
+      userPrompt += `- You MUST choose from the ${field.options.length} options listed above\n`;
       userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
-      userPrompt += `- NEVER return text, NEVER return the option label\n`;
+      userPrompt += `- DO NOT return text, DO NOT return the option label, DO NOT create your own answer\n`;
       userPrompt += `- ONLY return the number (e.g., "3")\n`;
-      userPrompt += `- Use reasoning to pick the BEST matching option\n`;
-      userPrompt += `- If no option fits, return "" (empty string)\n\n`;
+      userPrompt += `- Use logical reasoning to pick the BEST matching option based on the context\n`;
+      userPrompt += `- If NONE of the ${field.options.length} options fit the context, return "" (empty string) and explain why\n`;
+      userPrompt += `- Example valid responses: {"answer": "2", "explanation": null} or {"answer": "", "explanation": "No option matches user's background"}\n\n`;
     } else {
       userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
     }
@@ -562,9 +609,9 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     const result = JSON.parse(jsonMatch[0]);
 
-    // ==================== Validate and Fix Option Fields ====================
+    // ==================== Validate Option Fields ====================
 
-    // If this is an option field (select/radio), ensure answer is a valid number
+    // If this is an option field (select/radio), ensure answer is a valid number or empty
     if (field.options && field.options.length > 0 && result.answer) {
       const answerStr = String(result.answer).trim();
       const answerNum = parseInt(answerStr);
@@ -573,32 +620,18 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
       const isValidNumber = !isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length;
 
       if (!isValidNumber) {
-        // LLM returned text instead of number - try to fix it
-        console.warn('[AutoFeel Debug] ⚠️ LLM returned text instead of number:', answerStr);
-        console.warn('[AutoFeel Debug] Attempting to convert to option number...');
+        // LLM returned invalid answer - reject it
+        console.error(`[AutoFeel] ❌ LLM returned invalid answer for option field: "${answerStr}"`);
+        console.error(`[AutoFeel] Expected: number 1-${field.options.length} or empty string ""`);
+        console.error('[AutoFeel] Available options:', field.options.map((o, i) => `${i+1}. ${o.label}`).join(', '));
 
-        const answerLower = answerStr.toLowerCase();
-        let matchedIndex = -1;
-
-        // Try to find matching option
-        for (let i = 0; i < field.options.length; i++) {
-          const optionLabel = field.options[i].label.toLowerCase();
-          if (optionLabel === answerLower || optionLabel.includes(answerLower)) {
-            matchedIndex = i + 1; // Convert to 1-based
-            break;
-          }
-        }
-
-        if (matchedIndex > 0) {
-          console.warn(`[AutoFeel Debug] ✓ Converted "${answerStr}" to option ${matchedIndex}: "${field.options[matchedIndex - 1].label}"`);
-          result.answer = String(matchedIndex);
-        } else {
-          console.error(`[AutoFeel Debug] ❌ Could not convert "${answerStr}" to valid option number`);
-          console.error('[AutoFeel Debug] Available options:', field.options.map((o, i) => `${i+1}. ${o.label}`).join(', '));
-          // Keep original answer, let contentScript handle the fallback
+        // Force empty answer with explanation
+        result.answer = '';
+        if (!result.explanation) {
+          result.explanation = `LLM returned invalid answer format. Expected option number 1-${field.options.length}.`;
         }
       } else {
-        console.log('[AutoFeel Debug] ✅ Valid option number:', answerNum);
+        console.log('[AutoFeel] ✅ Valid option number:', answerNum);
       }
     }
 

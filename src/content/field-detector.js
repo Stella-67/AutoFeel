@@ -257,7 +257,16 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
       }
     }
 
-    // TODO: Refactor dropdown option detection
+    // For searchable selects and button-based selects, try to detect options
+    // This requires opening the dropdown temporarily
+    if (fieldInfo.type === 'button-select' ||
+        input.dataset.uxiWidgetType === 'selectinput' ||
+        (input.getAttribute('placeholder') === 'Search' && input.getAttribute('autocomplete') === 'off')) {
+
+      // Note: We mark this field as needing dynamic option detection
+      // Options will be detected when needed (to avoid slowing down initial detection)
+      fieldInfo.isDynamicDropdown = true;
+    }
 
     // Skip button-based selects without a meaningful label (likely navigation/action buttons, not form controls)
     if (fieldInfo.type === 'button-select' && (!label || label.length === 0)) {
@@ -291,4 +300,94 @@ function findLabelForInput(input) {
   if (parentLabel) return parentLabel.textContent.trim();
 
   return '';
+}
+
+/**
+ * Detect options from dynamic dropdown (searchable select, button-based select)
+ * This function temporarily opens the dropdown to collect options
+ * @param {string} fieldId - The field ID
+ * @returns {Promise<Array>} - Array of {label, value} options
+ */
+async function detectDynamicDropdownOptions(fieldId) {
+  const input = document.querySelector(`[data-autofeel-id="${fieldId}"]`);
+
+  if (!input) {
+    console.error(`[AutoFeel] Field ${fieldId} not found`);
+    return [];
+  }
+
+  console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${fieldId}`);
+
+  try {
+    // Open the dropdown
+    if (input.tagName === 'INPUT') {
+      input.focus();
+      input.click();
+      // Trigger events that might load options
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('focus', { bubbles: true }));
+      input.dispatchEvent(new Event('click', { bubbles: true }));
+    } else if (input.tagName === 'BUTTON') {
+      input.focus();
+      input.click();
+      input.dispatchEvent(new Event('click', { bubbles: true }));
+    }
+
+    // Wait for dropdown to appear and options to load
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Find visible options using multiple selectors
+    let optionElements = [];
+
+    // Try Workday-style options first
+    optionElements = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"]'));
+
+    // If no Workday options found, try standard ARIA listbox pattern
+    if (optionElements.length === 0) {
+      optionElements = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] > div, [role="listbox"] > li'));
+    }
+
+    // Filter to visible options only
+    optionElements = optionElements.filter(opt => {
+      const style = window.getComputedStyle(opt);
+      return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+    });
+
+    // Extract option data
+    const options = optionElements.map((opt, index) => {
+      const label = opt.textContent.trim() ||
+                    opt.getAttribute('data-automation-label') ||
+                    opt.getAttribute('aria-label') ||
+                    opt.getAttribute('value') ||
+                    `Option ${index + 1}`;
+
+      const value = opt.getAttribute('value') || label;
+
+      return { label, value };
+    });
+
+    console.log(`[AutoFeel] Found ${options.length} options for ${fieldId}`);
+
+    // Close the dropdown (press Escape)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+    input.blur();
+
+    // Wait for dropdown to close
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    return options;
+
+  } catch (error) {
+    console.error(`[AutoFeel] Error detecting dropdown options:`, error);
+
+    // Try to close dropdown anyway
+    try {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      input.blur();
+    } catch (e) {
+      // Ignore
+    }
+
+    return [];
+  }
 }

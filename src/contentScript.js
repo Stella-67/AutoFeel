@@ -970,41 +970,19 @@ async function fillSelectField(select, answer) {
 
   await new Promise(resolve => setTimeout(resolve, 200));
 
-  // Try to find matching option
+  // Try to find matching option - ONLY accept numeric index
   const options = Array.from(select.options);
   const answerTrimmed = answer.trim();
-  const answerLower = answerTrimmed.toLowerCase();
 
   let matchedOption = null;
-  let matchMethod = '';
 
-  // Priority 1: Check if answer is a number (option index) - THIS SHOULD BE THE PRIMARY METHOD
+  // ONLY accept number (option index) - no text matching fallback
   const answerNum = parseInt(answerTrimmed);
   if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= options.length) {
     matchedOption = options[answerNum - 1]; // Convert 1-based to 0-based index
-    matchMethod = `index ${answerNum}`;
-    console.log(`[AutoFeel] ✓ Matched by ${matchMethod}: "${matchedOption.text}"`);
-  }
-
-  // Priority 2: Try exact text match (fallback for old data or manual input)
-  if (!matchedOption) {
-    matchedOption = options.find(opt => opt.text.toLowerCase().trim() === answerLower);
-    if (matchedOption) {
-      matchMethod = 'exact text match';
-      console.log(`[AutoFeel] ✓ Matched by ${matchMethod}: "${matchedOption.text}"`);
-    }
-  }
-
-  // Priority 3: Try partial match (fallback for fuzzy matching)
-  if (!matchedOption) {
-    matchedOption = options.find(opt =>
-      opt.text.toLowerCase().includes(answerLower) ||
-      answerLower.includes(opt.text.toLowerCase().trim())
-    );
-    if (matchedOption) {
-      matchMethod = 'partial text match';
-      console.log(`[AutoFeel] ⚠️ Matched by ${matchMethod}: "${matchedOption.text}" (LLM should return index instead)`);
-    }
+    console.log(`[AutoFeel] ✓ Selected option ${answerNum}: "${matchedOption.text}"`);
+  } else {
+    console.error(`[AutoFeel] ❌ Invalid answer "${answerTrimmed}" - expected number 1-${options.length}`);
   }
 
   if (matchedOption) {
@@ -1064,46 +1042,17 @@ async function fillRadioField(radio, answer) {
   }
 
   const answerTrimmed = answer.trim();
-  const answerLower = answerTrimmed.toLowerCase();
   let matchedRadio = null;
-  let matchMethod = '';
 
-  // Priority 1: Check if answer is a number (option index) - THIS SHOULD BE THE PRIMARY METHOD
+  // ONLY accept number (option index) - no text matching fallback
   const answerNum = parseInt(answerTrimmed);
   if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= radioGroup.length) {
     matchedRadio = radioGroup[answerNum - 1]; // Convert 1-based to 0-based index
     const label = findLabelForInput(matchedRadio);
-    matchMethod = `index ${answerNum}`;
-    console.log(`[AutoFeel] ✓ Matched radio by ${matchMethod}: "${label || matchedRadio.value}"`);
-  }
-
-  // Priority 2: Try to find matching radio by label text (fallback)
-  if (!matchedRadio) {
-    for (const r of radioGroup) {
-      const label = findLabelForInput(r);
-      if (label && label.toLowerCase().includes(answerLower)) {
-        matchedRadio = r;
-        matchMethod = 'label text match';
-        console.log(`[AutoFeel] ⚠️ Matched radio by ${matchMethod}: "${label}" (LLM should return index instead)`);
-        break;
-      }
-    }
-  }
-
-  // Priority 3: If no match by label, try by value (fallback)
-  if (!matchedRadio) {
-    matchedRadio = Array.from(radioGroup).find(r =>
-      r.value.toLowerCase() === answerLower
-    );
-    if (matchedRadio) {
-      matchMethod = 'value match';
-      console.log(`[AutoFeel] ⚠️ Matched radio by ${matchMethod}: "${matchedRadio.value}" (LLM should return index instead)`);
-    }
-  }
-
-  if (!matchedRadio) {
-    console.warn(`[AutoFeel] ⚠️ No matching radio found for: "${answer}"`);
-    console.warn(`[AutoFeel] Available radio options (${radioGroup.length}):`,
+    console.log(`[AutoFeel] ✓ Selected radio option ${answerNum}: "${label || matchedRadio.value}"`);
+  } else {
+    console.error(`[AutoFeel] ❌ Invalid answer "${answerTrimmed}" - expected number 1-${radioGroup.length}`);
+    console.error(`[AutoFeel] Available radio options (${radioGroup.length}):`,
       Array.from(radioGroup).map((r, i) => `${i+1}. ${findLabelForInput(r) || r.value}`).join(', '));
   }
 
@@ -1230,6 +1179,20 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
         sendResponse({ success: true });
       } catch (error) {
         console.error('[AutoFeel] Error filling single field:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
+
+  if (request.type === 'DETECT_DROPDOWN_OPTIONS') {
+    // Detect options from dynamic dropdown
+    (async () => {
+      try {
+        const options = await detectDynamicDropdownOptions(request.fieldId);
+        sendResponse({ success: true, options: options });
+      } catch (error) {
+        console.error('[AutoFeel] Error detecting dropdown options:', error);
         sendResponse({ success: false, error: error.message });
       }
     })();
