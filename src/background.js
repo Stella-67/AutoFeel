@@ -313,28 +313,12 @@ async function handleAutoFillForm() {
       return;
     }
 
-    let response;
-    try {
-      response = await chrome.tabs.sendMessage(tab.id, { type: 'DETECT_FORM_FIELDS' });
-    } catch (error) {
-      console.error('[AutoFeel] Failed to communicate with content script:', error);
-      console.error('[AutoFeel] Please refresh the page (F5) and try again.');
+    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
+
+    if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
+      await notifyTab(tab.id, 'Please configure LLM API in extension settings', 'error');
       return;
     }
-
-    if (!response || !response.success) {
-      await notifyTab(tab.id, 'Failed to detect form fields', 'error');
-      return;
-    }
-
-    const formFields = response.fields;
-
-    if (formFields.length === 0) {
-      await notifyTab(tab.id, 'No form fields found on this page', 'error');
-      return;
-    }
-
-    console.log(`[AutoFeel] Auto-fill started with ${formFields.length} fields`);
 
     // Clear filled field tracking (start fresh)
     try {
@@ -343,131 +327,80 @@ async function handleAutoFillForm() {
       console.warn('[AutoFeel] Failed to clear filled fields (old content script?):', e.message);
     }
 
-    await notifyTab(tab.id, `Found ${formFields.length} fields. Retrieving from knowledge base...`, 'loading');
-
-    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
-
-    if (!config.apiKey || !config.apiEndpoint || !config.modelName) {
-      await notifyTab(tab.id, 'Please configure LLM API in extension settings', 'error');
-      return;
-    }
-
-    // Generate and fill answers one by one
-    // Strategy: Fill one field, re-detect remaining unfilled fields, repeat
+    // New strategy: Loop and fill top unfilled field each time
     let totalTokens = 0;
-    let filledCount = 0;
+    let totalFilledCount = 0;
     let iterationCount = 0;
-    const MAX_ITERATIONS = 100; // Safety limit to prevent infinite loops
+    const MAX_ITERATIONS = 100; // Safety limit
 
-    let remainingFields = formFields; // Start with initial detection
-
-    while (remainingFields.length > 0 && iterationCount < MAX_ITERATIONS) {
+    while (iterationCount < MAX_ITERATIONS) {
       iterationCount++;
 
-      // Process the first unfilled field
-      const field = remainingFields[0];
-      const totalCurrent = filledCount + remainingFields.length;
-
-      // Show progress notification
-      await notifyTab(tab.id, `Filling field ${filledCount + 1}/${totalCurrent}...`, 'loading');
-
-      const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
-
-      // Fill the field (or show hint if empty)
-      if (answer.success) {
-        // CRITICAL: Mark as filled FIRST to prevent re-detection
-        try {
-          await chrome.tabs.sendMessage(tab.id, {
-            type: 'MARK_AS_FILLED',
-            fieldId: field.id,
-            fieldLabel: field.label,
-            fieldName: field.name,  // Pass name for composite key
-            fieldType: field.type   // Pass type for composite key
-          });
-        } catch (markError) {
-          console.error(`[AutoFeel] Failed to mark field as filled:`, markError);
-        }
-
-        // Then try to fill
-        // Convert numeric index to option text for dynamic dropdowns (but not hierarchical ones)
-        let answerToFill = answer.data;
-        if (field.options && field.options.length > 0 && answer.data.answer) {
-          // Check if field has hierarchical options
-          const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
-
-          if (hasHierarchy) {
-            // For hierarchical options, answer is already text like "Job Board > LinkedIn"
-            console.log(`[AutoFeel] Hierarchical answer (no conversion needed): "${answer.data.answer}"`);
-          } else {
-            // For non-hierarchical options, convert numeric index to text
-            const answerNum = parseInt(answer.data.answer);
-            if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
-              // For dynamic dropdowns (searchable/button select), convert to option text
-              if (field.isDynamicDropdown || field.type === 'button-select') {
-                const optionText = field.options[answerNum - 1].label;
-                console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
-                answerToFill = {
-                  answer: optionText,
-                  explanation: answer.data.explanation
-                };
-              }
-            }
-          }
-        }
-
-        const fillResult = await chrome.tabs.sendMessage(tab.id, {
-          type: 'FILL_SINGLE_FIELD',
-          fieldId: field.id,
-          answer: answerToFill
-        });
-
-        if (fillResult && fillResult.success) {
-          filledCount++;
-        }
-
-        if (answer.tokenUsage) {
-          totalTokens += answer.tokenUsage.totalTokens;
-        }
-      } else {
-        console.error(`[AutoFeel] Failed to generate answer for ${field.id}:`, answer.error);
-      }
-
-      // Wait for page to update (fields may appear/disappear dynamically)
-      await new Promise(resolve => setTimeout(resolve, 600));
-
-      // Re-detect all remaining unfilled fields
+      // Detect current form state
+      let detectionResult;
       try {
-        const detectionResult = await chrome.tabs.sendMessage(tab.id, {
+        detectionResult = await chrome.tabs.sendMessage(tab.id, {
           type: 'DETECT_FORM_FIELDS',
-          onlyUnfilled: true  // Only detect fields not yet filled
+          onlyUnfilled: true
         });
-
-        if (detectionResult && detectionResult.success && detectionResult.fields) {
-          const oldCount = remainingFields.length;
-          const newCount = detectionResult.fields.length;
-
-          remainingFields = detectionResult.fields;
-
-          if (newCount !== oldCount - 1) {
-            // Expected: oldCount - 1 (we just processed one)
-            // If different, fields were added or removed dynamically
-            console.log(`[AutoFeel] Remaining fields: ${newCount} (${newCount > oldCount - 1 ? 'added' : 'removed'} ${Math.abs(newCount - (oldCount - 1))})`);
-          }
-        } else {
-          // No more unfilled fields detected
-          remainingFields = [];
-        }
-      } catch (detectError) {
-        console.log('[AutoFeel] Re-detection failed:', detectError.message);
-        remainingFields = [];
+      } catch (error) {
+        console.error('[AutoFeel] Failed to detect fields:', error);
+        break;
       }
+
+      if (!detectionResult || !detectionResult.success || !detectionResult.fields || detectionResult.fields.length === 0) {
+        console.log('[AutoFeel] No more unfilled fields detected');
+        break;
+      }
+
+      const unfilledFields = detectionResult.fields;
+      const totalFields = totalFilledCount + unfilledFields.length;
+
+      console.log(`[AutoFeel] Page status: Total=${totalFields}, Filled=${totalFilledCount}, Unfilled=${unfilledFields.length}`);
+
+      // Get the first (topmost) unfilled field
+      const topField = unfilledFields[0];
+      console.log(`[AutoFeel] Processing top unfilled field: "${topField.label}" (${topField.type})`);
+
+      // Show progress
+      await notifyTab(tab.id, `Filling ${totalFilledCount + 1}/${totalFields}: ${topField.label}`, 'loading');
+
+      // Use Option+Click strategy: check if selection field or text field
+      const isSelectionField = topField.type === 'radio' ||
+                              topField.type === 'checkbox' ||
+                              topField.type === 'select' ||
+                              topField.type === 'button-select' ||
+                              topField.isDynamicDropdown;
+
+      let fillResult;
+      if (isSelectionField) {
+        // Selection field: use recursive filling (same as Option+Click)
+        fillResult = await recursiveFillFromField(tab, topField.id, savedContext, config, 0);
+      } else {
+        // Text field: fill only this one field (same as Option+Click)
+        fillResult = await fillSingleFieldNonRecursive(tab, topField, savedContext, config);
+      }
+
+      if (fillResult.success) {
+        totalFilledCount += fillResult.filledCount || 1;
+        totalTokens += fillResult.totalTokens || 0;
+        console.log(`[AutoFeel] Successfully filled field(s). Total filled: ${totalFilledCount}`);
+      } else {
+        console.error(`[AutoFeel] Failed to fill field "${topField.label}":`, fillResult.error);
+        // Continue to next field even if this one failed
+        totalFilledCount++; // Count as attempted
+      }
+
+      // Wait for page to update
+      await new Promise(resolve => setTimeout(resolve, 600));
     }
 
     if (iterationCount >= MAX_ITERATIONS) {
       console.warn('[AutoFeel] Reached maximum iteration limit');
+      await notifyTab(tab.id, `⚠️ Filled ${totalFilledCount} fields (iteration limit reached)`, 'warning');
+    } else {
+      await notifyTab(tab.id, `✅ Successfully filled ${totalFilledCount} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
     }
-
-    await notifyTab(tab.id, `✅ Successfully filled ${filledCount} fields (${totalTokens.toLocaleString()} tokens)`, 'success');
   } catch (error) {
     console.error('[AutoFeel] Error in handleAutoFillForm:', error);
     try {
@@ -543,37 +476,24 @@ Content: ${chunk.text}`;
     }
 
     // ==================== Detect Dynamic Dropdown Options ====================
-    // DEBUG: Log field state
-    console.log(`[AutoFeel DEBUG] Field: ${field.id}, type: ${field.type}, isDynamicDropdown: ${field.isDynamicDropdown}, options: ${field.options ? field.options.length : 'undefined'}`);
-
     // If this is a dynamic dropdown without options, detect them now
-    const needsDetection = field.isDynamicDropdown && (!field.options || field.options.length === 0);
-    console.log(`[AutoFeel DEBUG] Needs detection: ${needsDetection}`);
-
-    if (needsDetection) {
-      console.log(`[AutoFeel DEBUG] Entering detection block for ${field.id}`);
+    if (field.isDynamicDropdown && (!field.options || field.options.length === 0)) {
       try {
-        // Use the tab we got at the beginning of the function
-        console.log(`[AutoFeel DEBUG] Using tab: ${tab.id}`);
         console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${field.id}`);
         const response = await chrome.tabs.sendMessage(tab.id, {
           type: 'DETECT_DROPDOWN_OPTIONS',
           fieldId: field.id
         });
 
-        console.log(`[AutoFeel DEBUG] Detection response:`, response);
-
         if (response && response.success && response.options && response.options.length > 0) {
           field.options = response.options;
-          console.log(`[AutoFeel] ✓ Detected ${field.options.length} options for ${field.id}`);
+          console.log(`[AutoFeel] Detected ${field.options.length} options`);
         } else {
-          console.warn(`[AutoFeel] ⚠️ Failed to detect options for ${field.id}`);
+          console.warn(`[AutoFeel] Failed to detect options for ${field.id}`);
         }
       } catch (detectError) {
         console.error('[AutoFeel] Error detecting dropdown options:', detectError);
       }
-    } else {
-      console.log(`[AutoFeel DEBUG] Skipping detection for ${field.id}`);
     }
 
     // ==================== Build Prompt for Single Field ====================
@@ -955,8 +875,7 @@ async function handleSubmenuSelection(parentOption, submenuOptions, fieldContext
       return { success: false, error: 'Missing configuration or context' };
     }
 
-    console.log(`[AutoFeel] 🤖 Asking LLM to select from submenu under "${parentOption}"`);
-    console.log(`[AutoFeel] Submenu options:`, submenuOptions);
+    console.log(`[AutoFeel] Asking LLM for submenu selection under "${parentOption}"`);
 
     // Build prompt for submenu selection
     const systemPrompt = `You are an AI form-filling assistant. The user previously selected "${parentOption}" from a dropdown menu, and now a submenu has appeared with more options.
@@ -1006,7 +925,7 @@ CRITICAL RULES:
       await updateTokenUsage(config.llmProvider, tokenUsage);
     }
 
-    console.log(`[AutoFeel] 🎯 LLM selected submenu option: "${answer}"`);
+    console.log(`[AutoFeel] LLM selected: "${answer}"`);
 
     return {
       success: true,
@@ -1041,8 +960,6 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
     return { success: true, filledCount: 0, totalTokens: 0 };
   }
 
-  console.log(`[AutoFeel] 🔄 Recursion depth ${depth}: Detecting fields...`);
-
   // Detect all fields (if startFieldId provided, detect all; otherwise detect unfilled)
   let detectionResult;
   try {
@@ -1056,7 +973,6 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
   }
 
   if (!detectionResult || !detectionResult.success || !detectionResult.fields || detectionResult.fields.length === 0) {
-    console.log(`[AutoFeel] 🏁 No more fields to fill at depth ${depth}`);
     return { success: true, filledCount: 0, totalTokens: 0 };
   }
 
@@ -1074,12 +990,9 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
     field = detectionResult.fields[0];
   }
 
-  console.log(`[AutoFeel] 📝 Depth ${depth}: Filling field "${field.label}" (${field.type})`);
-
   // CRITICAL: Capture all current field IDs BEFORE filling
   // This allows us to detect truly NEW fields that appear after filling
   const fieldIdsBefore = new Set(detectionResult.fields.map(f => f.id));
-  console.log(`[AutoFeel] 📸 Depth ${depth}: Captured ${fieldIdsBefore.size} field IDs before filling`);
 
   // Generate answer for this field
   const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
@@ -1139,13 +1052,8 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
   let totalTokens = answer.tokenUsage ? answer.tokenUsage.totalTokens : 0;
   let filledCount = 1;
 
-  console.log(`[AutoFeel] ✅ Depth ${depth}: Filled "${field.label}"`);
-
   // Wait for page to update (new conditional fields may appear)
   await new Promise(resolve => setTimeout(resolve, 800));
-
-  // Re-detect ALL fields (not just unfilled) to compare with before
-  console.log(`[AutoFeel] 🔍 Depth ${depth}: Re-detecting all fields to find newly appeared ones...`);
 
   let afterFieldsResult;
   try {
@@ -1164,9 +1072,6 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
     const newlyAppearedFields = afterFieldsResult.fields.filter(f => !fieldIdsBefore.has(f.id));
 
     if (newlyAppearedFields.length > 0) {
-      console.log(`[AutoFeel] 🆕 Depth ${depth}: ${newlyAppearedFields.length} NEW field(s) appeared after filling!`);
-      newlyAppearedFields.forEach(f => console.log(`  → ${f.label} (${f.type})`));
-
       // Filter for selection-type fields only (radio, checkbox, select, dropdown)
       // Don't recursively fill text fields - let user handle those manually
       const newSelectionFields = newlyAppearedFields.filter(f => {
@@ -1178,21 +1083,13 @@ async function recursiveFillFromField(tab, startFieldId, savedContext, config, d
       });
 
       if (newSelectionFields.length > 0) {
-        console.log(`[AutoFeel] ✅ Depth ${depth}: ${newSelectionFields.length} of them are selection-type, continuing recursively...`);
-
         // Recursively fill the first new selection field
         const recursiveResult = await recursiveFillFromField(tab, newSelectionFields[0].id, savedContext, config, depth + 1);
 
         filledCount += recursiveResult.filledCount;
         totalTokens += recursiveResult.totalTokens;
-      } else {
-        console.log(`[AutoFeel] 🏁 Depth ${depth}: New fields are text-type, stopping recursion`);
       }
-    } else {
-      console.log(`[AutoFeel] 🏁 Depth ${depth}: No new fields appeared, stopping recursion`);
     }
-  } else {
-    console.log(`[AutoFeel] 🏁 Depth ${depth}: No fields found after filling`);
   }
 
   return { success: true, filledCount, totalTokens };
