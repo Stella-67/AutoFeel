@@ -49,6 +49,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     })();
     return true; // Keep message channel open for async response
   }
+
+  if (message.type === 'SELECT_FROM_SUBMENU') {
+    // Handle submenu selection during dropdown filling
+    (async () => {
+      try {
+        const result = await handleSubmenuSelection(
+          message.parentOption,
+          message.submenuOptions,
+          message.fieldContext
+        );
+        sendResponse(result);
+      } catch (error) {
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
 });
 
 // ==================== Command Listeners ====================
@@ -767,8 +787,6 @@ async function handleFillSingleFieldByClick(fieldId) {
       return;
     }
 
-    console.log(`[AutoFeel] Option+Click: Filling field ${fieldId}`);
-
     await notifyTab(tab.id, 'Analyzing clicked field...', 'loading');
 
     // Get saved context
@@ -780,35 +798,6 @@ async function handleFillSingleFieldByClick(fieldId) {
       return;
     }
 
-    // Detect the single clicked field
-    let detectionResult;
-    try {
-      detectionResult = await chrome.tabs.sendMessage(tab.id, {
-        type: 'DETECT_FORM_FIELDS',
-        onlyUnfilled: false  // Detect all fields to find the clicked one
-      });
-    } catch (error) {
-      console.error('[AutoFeel] Failed to detect field:', error);
-      await notifyTab(tab.id, 'Failed to detect field. Please refresh and try again.', 'error');
-      return;
-    }
-
-    if (!detectionResult || !detectionResult.success) {
-      await notifyTab(tab.id, 'Failed to detect field', 'error');
-      return;
-    }
-
-    // Find the clicked field by ID
-    const field = detectionResult.fields.find(f => f.id === fieldId);
-
-    if (!field) {
-      console.error('[AutoFeel] Clicked field not found in detection results');
-      await notifyTab(tab.id, 'Field not found. Please try again.', 'error');
-      return;
-    }
-
-    console.log(`[AutoFeel] Found clicked field: "${field.label}" (${field.type})`);
-
     // Get LLM config
     const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
 
@@ -817,27 +806,109 @@ async function handleFillSingleFieldByClick(fieldId) {
       return;
     }
 
-    await notifyTab(tab.id, `Generating answer for "${field.label}"...`, 'loading');
-
-    // Generate answer for this single field
-    const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
-
-    if (!answer.success) {
-      await notifyTab(tab.id, `Failed to generate answer: ${answer.error}`, 'error');
+    // Detect the clicked field first to check its type
+    let detectionResult;
+    try {
+      detectionResult = await chrome.tabs.sendMessage(tab.id, {
+        type: 'DETECT_FORM_FIELDS',
+        onlyUnfilled: false
+      });
+    } catch (error) {
+      console.error('[AutoFeel] Failed to detect field:', error);
+      await notifyTab(tab.id, 'Failed to detect field', 'error');
       return;
     }
 
-    // Convert numeric index to option text for dynamic dropdowns (but not hierarchical ones)
+    if (!detectionResult || !detectionResult.success) {
+      await notifyTab(tab.id, 'Failed to detect field', 'error');
+      return;
+    }
+
+    const clickedField = detectionResult.fields.find(f => f.id === fieldId);
+    if (!clickedField) {
+      await notifyTab(tab.id, 'Field not found', 'error');
+      return;
+    }
+
+    const isSelectionField = clickedField.type === 'radio' ||
+                            clickedField.type === 'checkbox' ||
+                            clickedField.type === 'select' ||
+                            clickedField.type === 'button-select' ||
+                            clickedField.isDynamicDropdown;
+
+    if (isSelectionField) {
+      // This is a selection field - use recursive filling to handle conditional sub-questions
+      console.log(`[AutoFeel] Option+Click: Selection field detected, starting recursive fill from "${clickedField.label}"`);
+      const result = await recursiveFillFromField(tab, fieldId, savedContext, config, 0);
+
+      if (result.success) {
+        const tokenInfo = result.totalTokens > 0 ? ` (${result.totalTokens.toLocaleString()} tokens)` : '';
+        await notifyTab(tab.id, `✅ Filled ${result.filledCount} field(s)${tokenInfo}`, 'success');
+        console.log(`[AutoFeel] Recursive fill completed: ${result.filledCount} fields filled`);
+      } else {
+        await notifyTab(tab.id, result.error || 'Failed to fill fields', 'error');
+      }
+    } else {
+      // This is a text field - fill only this one field, no recursion
+      console.log(`[AutoFeel] Option+Click: Text field detected, filling single field "${clickedField.label}" without recursion`);
+      const result = await fillSingleFieldNonRecursive(tab, clickedField, savedContext, config);
+
+      if (result.success) {
+        const tokenInfo = result.totalTokens > 0 ? ` (${result.totalTokens.toLocaleString()} tokens)` : '';
+        await notifyTab(tab.id, `✅ Filled "${clickedField.label}"${tokenInfo}`, 'success');
+      } else {
+        await notifyTab(tab.id, result.error || 'Failed to fill field', 'error');
+      }
+    }
+
+  } catch (error) {
+    console.error('[AutoFeel] Error in handleFillSingleFieldByClick:', error);
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) {
+        await notifyTab(tab.id, `Error: ${error.message}`, 'error');
+      }
+    } catch (e) {
+      console.error('[AutoFeel] Failed to show error notification:', e);
+    }
+  }
+}
+
+// ==================== Fill Single Field (Non-Recursive) ====================
+
+/**
+ * Fill a single field without recursion (for text fields)
+ */
+async function fillSingleFieldNonRecursive(tab, field, savedContext, config) {
+  try {
+    // Generate answer
+    const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
+
+    if (!answer.success) {
+      return { success: false, totalTokens: 0, error: answer.error };
+    }
+
+    // Mark as filled
+    try {
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'MARK_AS_FILLED',
+        fieldId: field.id,
+        fieldLabel: field.label,
+        fieldName: field.name,
+        fieldType: field.type
+      });
+    } catch (markError) {
+      console.error(`[AutoFeel] Failed to mark field as filled:`, markError);
+    }
+
+    // Convert answer format if needed
     let answerToFill = answer.data;
     if (field.options && field.options.length > 0 && answer.data.answer) {
-      // Check if field has hierarchical options
       const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
 
       if (hasHierarchy) {
-        // For hierarchical options, answer is already text like "Job Board > LinkedIn"
-        console.log(`[AutoFeel] Hierarchical answer (no conversion needed): "${answer.data.answer}"`);
+        console.log(`[AutoFeel] Hierarchical answer: "${answer.data.answer}"`);
       } else {
-        // For non-hierarchical options, convert numeric index to text
         const answerNum = parseInt(answer.data.answer);
         if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
           if (field.isDynamicDropdown || field.type === 'button-select') {
@@ -859,24 +930,271 @@ async function handleFillSingleFieldByClick(fieldId) {
       answer: answerToFill
     });
 
-    if (fillResult && fillResult.success) {
-      const tokenInfo = answer.tokenUsage ? ` (${answer.tokenUsage.totalTokens} tokens)` : '';
-      await notifyTab(tab.id, `✅ Filled "${field.label}"${tokenInfo}`, 'success');
-      console.log(`[AutoFeel] Successfully filled field "${field.label}"`);
-    } else {
-      await notifyTab(tab.id, 'Failed to fill field', 'error');
+    if (!fillResult || !fillResult.success) {
+      return { success: false, totalTokens: 0, error: 'Failed to fill field' };
     }
 
+    const totalTokens = answer.tokenUsage ? answer.tokenUsage.totalTokens : 0;
+    return { success: true, totalTokens };
+
   } catch (error) {
-    console.error('[AutoFeel] Error in handleFillSingleFieldByClick:', error);
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        await notifyTab(tab.id, `Error: ${error.message}`, 'error');
+    console.error('[AutoFeel] Error in fillSingleFieldNonRecursive:', error);
+    return { success: false, totalTokens: 0, error: error.message };
+  }
+}
+
+// ==================== Handle Submenu Selection ====================
+
+async function handleSubmenuSelection(parentOption, submenuOptions, fieldContext) {
+  try {
+    // Get saved context and LLM config
+    const { savedContext } = await chrome.storage.local.get(['savedContext']);
+    const config = await chrome.storage.sync.get(['llmProvider', 'apiKey', 'apiEndpoint', 'modelName']);
+
+    if (!savedContext || !config.apiKey || !config.apiEndpoint || !config.modelName) {
+      return { success: false, error: 'Missing configuration or context' };
+    }
+
+    console.log(`[AutoFeel] 🤖 Asking LLM to select from submenu under "${parentOption}"`);
+    console.log(`[AutoFeel] Submenu options:`, submenuOptions);
+
+    // Build prompt for submenu selection
+    const systemPrompt = `You are an AI form-filling assistant. The user previously selected "${parentOption}" from a dropdown menu, and now a submenu has appeared with more options.
+
+Your task: Select the most appropriate option from the submenu based on the user's context.
+
+CRITICAL RULES:
+1. Return ONLY the option text, nothing else
+2. Choose from the provided submenu options ONLY
+3. If no option matches the user's context, choose "Other" or the most generic option
+4. Return format: Just the option text (e.g., "LinkedIn")`;
+
+    let userPrompt = `${fieldContext}\n\n=== SUBMENU OPTIONS ===\n`;
+    submenuOptions.forEach((option, index) => {
+      userPrompt += `${index + 1}. ${option}\n`;
+    });
+
+    userPrompt += `\n=== USER CONTEXT ===\n${JSON.stringify(savedContext, null, 2)}\n\n`;
+    userPrompt += `Select the most relevant option from the submenu.`;
+
+    // Call LLM using the same pattern as generateSingleFieldAnswer
+    const requestBody = buildLLMRequestBody(config.llmProvider, config.modelName, userPrompt, systemPrompt, {
+      maxTokens: 200,
+      temperature: 0.1
+    });
+    const headers = buildLLMHeaders(config.llmProvider, config.apiKey);
+
+    const response = await fetch(config.apiEndpoint, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        success: false,
+        error: `API request failed (${response.status}): ${errorText}`
+      };
+    }
+
+    const data = await response.json();
+    const answer = extractLLMResponse(config.llmProvider, data).trim();
+
+    const tokenUsage = extractTokenUsage(config.llmProvider, data);
+    if (tokenUsage) {
+      await updateTokenUsage(config.llmProvider, tokenUsage);
+    }
+
+    console.log(`[AutoFeel] 🎯 LLM selected submenu option: "${answer}"`);
+
+    return {
+      success: true,
+      answer: answer,
+      tokenUsage: tokenUsage
+    };
+
+  } catch (error) {
+    console.error('[AutoFeel] Error in handleSubmenuSelection:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// ==================== Recursive Fill Algorithm ====================
+
+/**
+ * Recursively fill fields starting from a specific field
+ * After filling each field, re-detect to find newly appeared conditional fields
+ *
+ * @param {Object} tab - Chrome tab object
+ * @param {string} startFieldId - ID of the field to start filling (null for auto-detect first unfilled)
+ * @param {Object} savedContext - User's saved context
+ * @param {Object} config - LLM configuration
+ * @param {number} depth - Current recursion depth (for safety limit)
+ * @returns {Promise<{success: boolean, filledCount: number, totalTokens: number, error?: string}>}
+ */
+async function recursiveFillFromField(tab, startFieldId, savedContext, config, depth = 0) {
+  const MAX_DEPTH = 50; // Safety limit to prevent infinite recursion
+
+  if (depth >= MAX_DEPTH) {
+    console.warn('[AutoFeel] Reached maximum recursion depth');
+    return { success: true, filledCount: 0, totalTokens: 0 };
+  }
+
+  console.log(`[AutoFeel] 🔄 Recursion depth ${depth}: Detecting fields...`);
+
+  // Detect all fields (if startFieldId provided, detect all; otherwise detect unfilled)
+  let detectionResult;
+  try {
+    detectionResult = await chrome.tabs.sendMessage(tab.id, {
+      type: 'DETECT_FORM_FIELDS',
+      onlyUnfilled: startFieldId ? false : true  // If we have a specific field, detect all; otherwise only unfilled
+    });
+  } catch (error) {
+    console.error('[AutoFeel] Failed to detect fields at depth', depth, error);
+    return { success: false, filledCount: 0, totalTokens: 0, error: 'Failed to detect fields' };
+  }
+
+  if (!detectionResult || !detectionResult.success || !detectionResult.fields || detectionResult.fields.length === 0) {
+    console.log(`[AutoFeel] 🏁 No more fields to fill at depth ${depth}`);
+    return { success: true, filledCount: 0, totalTokens: 0 };
+  }
+
+  // Find the field to fill
+  let field;
+  if (startFieldId) {
+    // Find the specific field by ID
+    field = detectionResult.fields.find(f => f.id === startFieldId);
+    if (!field) {
+      console.error('[AutoFeel] Specified field not found:', startFieldId);
+      return { success: false, filledCount: 0, totalTokens: 0, error: 'Field not found' };
+    }
+  } else {
+    // Take the first unfilled field
+    field = detectionResult.fields[0];
+  }
+
+  console.log(`[AutoFeel] 📝 Depth ${depth}: Filling field "${field.label}" (${field.type})`);
+
+  // CRITICAL: Capture all current field IDs BEFORE filling
+  // This allows us to detect truly NEW fields that appear after filling
+  const fieldIdsBefore = new Set(detectionResult.fields.map(f => f.id));
+  console.log(`[AutoFeel] 📸 Depth ${depth}: Captured ${fieldIdsBefore.size} field IDs before filling`);
+
+  // Generate answer for this field
+  const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
+
+  if (!answer.success) {
+    console.error(`[AutoFeel] Failed to generate answer at depth ${depth}:`, answer.error);
+    return { success: false, filledCount: 0, totalTokens: 0, error: answer.error };
+  }
+
+  // Mark as filled FIRST
+  try {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'MARK_AS_FILLED',
+      fieldId: field.id,
+      fieldLabel: field.label,
+      fieldName: field.name,
+      fieldType: field.type
+    });
+  } catch (markError) {
+    console.error(`[AutoFeel] Failed to mark field as filled:`, markError);
+  }
+
+  // Convert answer format if needed
+  let answerToFill = answer.data;
+  if (field.options && field.options.length > 0 && answer.data.answer) {
+    const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
+
+    if (hasHierarchy) {
+      console.log(`[AutoFeel] Hierarchical answer: "${answer.data.answer}"`);
+    } else {
+      const answerNum = parseInt(answer.data.answer);
+      if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
+        if (field.isDynamicDropdown || field.type === 'button-select') {
+          const optionText = field.options[answerNum - 1].label;
+          console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
+          answerToFill = {
+            answer: optionText,
+            explanation: answer.data.explanation
+          };
+        }
       }
-    } catch (e) {
-      console.error('[AutoFeel] Failed to show error notification:', e);
     }
   }
+
+  // Fill the field
+  const fillResult = await chrome.tabs.sendMessage(tab.id, {
+    type: 'FILL_SINGLE_FIELD',
+    fieldId: field.id,
+    answer: answerToFill
+  });
+
+  if (!fillResult || !fillResult.success) {
+    console.error(`[AutoFeel] Failed to fill field at depth ${depth}`);
+    return { success: false, filledCount: 0, totalTokens: 0, error: 'Failed to fill field' };
+  }
+
+  let totalTokens = answer.tokenUsage ? answer.tokenUsage.totalTokens : 0;
+  let filledCount = 1;
+
+  console.log(`[AutoFeel] ✅ Depth ${depth}: Filled "${field.label}"`);
+
+  // Wait for page to update (new conditional fields may appear)
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  // Re-detect ALL fields (not just unfilled) to compare with before
+  console.log(`[AutoFeel] 🔍 Depth ${depth}: Re-detecting all fields to find newly appeared ones...`);
+
+  let afterFieldsResult;
+  try {
+    afterFieldsResult = await chrome.tabs.sendMessage(tab.id, {
+      type: 'DETECT_FORM_FIELDS',
+      onlyUnfilled: false  // Detect ALL fields to compare
+    });
+  } catch (error) {
+    console.warn('[AutoFeel] Failed to re-detect fields:', error);
+    // Continue anyway, we filled at least one field
+    return { success: true, filledCount, totalTokens };
+  }
+
+  if (afterFieldsResult && afterFieldsResult.success && afterFieldsResult.fields && afterFieldsResult.fields.length > 0) {
+    // Find truly NEW fields by comparing IDs
+    const newlyAppearedFields = afterFieldsResult.fields.filter(f => !fieldIdsBefore.has(f.id));
+
+    if (newlyAppearedFields.length > 0) {
+      console.log(`[AutoFeel] 🆕 Depth ${depth}: ${newlyAppearedFields.length} NEW field(s) appeared after filling!`);
+      newlyAppearedFields.forEach(f => console.log(`  → ${f.label} (${f.type})`));
+
+      // Filter for selection-type fields only (radio, checkbox, select, dropdown)
+      // Don't recursively fill text fields - let user handle those manually
+      const newSelectionFields = newlyAppearedFields.filter(f => {
+        return f.type === 'radio' ||
+               f.type === 'checkbox' ||
+               f.type === 'select' ||
+               f.type === 'button-select' ||
+               f.isDynamicDropdown;
+      });
+
+      if (newSelectionFields.length > 0) {
+        console.log(`[AutoFeel] ✅ Depth ${depth}: ${newSelectionFields.length} of them are selection-type, continuing recursively...`);
+
+        // Recursively fill the first new selection field
+        const recursiveResult = await recursiveFillFromField(tab, newSelectionFields[0].id, savedContext, config, depth + 1);
+
+        filledCount += recursiveResult.filledCount;
+        totalTokens += recursiveResult.totalTokens;
+      } else {
+        console.log(`[AutoFeel] 🏁 Depth ${depth}: New fields are text-type, stopping recursion`);
+      }
+    } else {
+      console.log(`[AutoFeel] 🏁 Depth ${depth}: No new fields appeared, stopping recursion`);
+    }
+  } else {
+    console.log(`[AutoFeel] 🏁 Depth ${depth}: No fields found after filling`);
+  }
+
+  return { success: true, filledCount, totalTokens };
 }
 

@@ -491,55 +491,10 @@ async function detectDynamicDropdownOptions(fieldId) {
 
       const value = opt.getAttribute('value') || label;
 
-      const optionData = { label, value };
-
-      // ALWAYS try to detect children by hovering, regardless of ARIA attributes
-      // This is more reliable for complex dropdown systems
-      try {
-        // Store initial option count
-        const initialOptionCount = allOptions.size;
-
-        // Hover over the option to potentially reveal submenu
-        opt.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-        opt.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-
-        // Wait for submenu to appear (if any)
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // Check if new options appeared (indicating a submenu)
-        const currentOptions = Array.from(document.querySelectorAll('[role="option"]'))
-          .filter(subOpt => {
-            const style = window.getComputedStyle(subOpt);
-            return style.display !== 'none' &&
-                   style.visibility !== 'hidden' &&
-                   subOpt.offsetParent !== null &&
-                   !allOptions.has(subOpt.textContent.trim()); // Exclude parent options
-          });
-
-        // If new options appeared, they're children of this option
-        if (currentOptions.length > initialOptionCount) {
-          const children = currentOptions
-            .filter(subOpt => !allOptions.has(subOpt.textContent.trim()))
-            .map(subOpt => ({
-              label: subOpt.textContent.trim(),
-              value: subOpt.getAttribute('value') || subOpt.textContent.trim()
-            }));
-
-          if (children.length > 0) {
-            optionData.children = children;
-            console.log(`[AutoFeel] ✨ Found ${children.length} submenu options under "${label}":`,
-                        children.map(c => c.label).join(', '));
-          }
-        }
-
-        // Move mouse away to close submenu
-        opt.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
-        await new Promise(resolve => setTimeout(resolve, 150));
-      } catch (subError) {
-        console.warn(`[AutoFeel] Error detecting submenu for "${label}":`, subError);
-      }
-
-      options.push(optionData);
+      // Don't try to detect children during initial detection
+      // Children will be detected AFTER selecting the parent option
+      // This is more reliable and avoids timing issues
+      options.push({ label, value });
     }
 
     console.log(`[AutoFeel] Found ${options.length} options for ${fieldId} (including hierarchical)`);

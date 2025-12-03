@@ -890,33 +890,142 @@ async function selectFromDropdown(trigger, answerPath, depth = 0) {
 
   console.log(`[AutoFeel] ✓ Level ${depth}: Matched "${matchedOption.textContent.trim()}"`);
 
-  // Check if this option has a submenu (indicated by aria attributes or structure)
-  const hasSubmenu =
-    matchedOption.getAttribute('aria-haspopup') === 'true' ||
-    matchedOption.getAttribute('aria-expanded') !== null ||
-    matchedOption.querySelector('[aria-haspopup="true"]') !== null;
-
   const isLastInPath = depth === answerPath.length - 1;
 
-  if (hasSubmenu && !isLastInPath) {
-    // This is a parent option with submenu, and we have more path segments
-    console.log(`[AutoFeel] 📂 Has submenu, continuing to level ${depth + 1}`);
+  // Store original option count BEFORE clicking
+  const originalOptionTexts = options.map(o => o.textContent.trim());
+  console.log(`[AutoFeel] 📊 Before click: ${originalOptionTexts.length} options visible`);
 
-    // Hover or click to expand submenu (don't finalize selection yet)
-    matchedOption.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    await new Promise(resolve => setTimeout(resolve, 300));
+  // Click the option
+  matchedOption.click();
+  console.log(`[AutoFeel] 🖱️ Clicked "${matchedOption.textContent.trim()}"`);
 
-    // Recursively select from submenu
-    return await selectFromDropdown(matchedOption, answerPath, depth + 1);
+  // Wait for potential submenu to appear
+  await new Promise(resolve => setTimeout(resolve, 800));
+
+  // Check if new options appeared (indicating a submenu)
+  const optionsAfterClick = Array.from(document.querySelectorAll('[role="option"]'))
+    .filter(opt => {
+      const style = window.getComputedStyle(opt);
+      return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+    });
+
+  console.log(`[AutoFeel] 📊 After click: ${optionsAfterClick.length} options visible`);
+
+  // Find truly new options by comparing text
+  const originalTexts = new Set(originalOptionTexts);
+
+  const newOptions = optionsAfterClick.filter(opt => {
+    const text = opt.textContent.trim();
+    return !originalTexts.has(text);
+  });
+
+  console.log(`[AutoFeel] 🔍 New options detected: ${newOptions.length}`);
+  if (newOptions.length > 0) {
+    console.log(`[AutoFeel] New option texts:`, newOptions.map(o => o.textContent.trim()));
+  }
+
+  // If submenu appeared, always ask LLM to select (regardless of path state)
+  // This handles cases where LLM didn't know about the hierarchy initially
+  if (newOptions.length > 0) {
+    // Submenu appeared! Ask LLM to select from these new options
+    console.log(`[AutoFeel] 🆕 Submenu appeared with ${newOptions.length} options after clicking "${currentAnswer}"`);
+
+    // CRITICAL: Find the input element to update its value directly
+    const inputElement = document.querySelector('input[data-uxi-widget-type="selectinput"], input[placeholder="Search"][autocomplete="off"]');
+    if (inputElement) {
+      console.log(`[AutoFeel] 📝 Found input element:`, inputElement);
+    }
+
+    // Send message to background to ask LLM for sub-selection
+    console.log(`[AutoFeel] 📤 Sending SELECT_FROM_SUBMENU message to background...`);
+
+    let submenuResult;
+    try {
+      submenuResult = await chrome.runtime.sendMessage({
+        type: 'SELECT_FROM_SUBMENU',
+        parentOption: currentAnswer,
+        submenuOptions: newOptions.map(opt => opt.textContent.trim()),
+        fieldContext: `After selecting "${currentAnswer}", choose from:`
+      });
+      console.log(`[AutoFeel] 📥 Received response from background:`, submenuResult);
+    } catch (error) {
+      console.error(`[AutoFeel] ❌ Error sending message to background:`, error);
+      return false;
+    }
+
+    if (submenuResult && submenuResult.success && submenuResult.answer) {
+      console.log(`[AutoFeel] 🤖 LLM selected submenu option: "${submenuResult.answer}"`);
+
+      // Find the submenu option
+      const submenuOption = findMatchingOption(newOptions, submenuResult.answer);
+      if (submenuOption) {
+        // Get the option's position in the list
+        const position = submenuOption.getAttribute('aria-posinset');
+        const totalOptions = submenuOption.getAttribute('aria-setsize');
+        console.log(`[AutoFeel] 🎯 Target option "${submenuResult.answer}" is at position ${position} of ${totalOptions}`);
+
+        // Highlight the option
+        submenuOption.style.transition = 'all 0.2s ease';
+        submenuOption.style.backgroundColor = 'rgba(76, 175, 80, 0.2)';
+        submenuOption.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Strategy: Find and click the radio button/checkbox inside the option
+        console.log(`[AutoFeel] 🔍 Looking for radio/checkbox inside option ${position}`);
+
+        // Look for input elements (radio/checkbox) inside the option
+        const radioOrCheckbox = submenuOption.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+
+        if (radioOrCheckbox) {
+          console.log(`[AutoFeel] ⭕ Found clickable element:`, radioOrCheckbox);
+          console.log(`[AutoFeel] Element type: ${radioOrCheckbox.tagName}, role: ${radioOrCheckbox.getAttribute('role')}, type: ${radioOrCheckbox.type}`);
+
+          // Click the radio/checkbox
+          radioOrCheckbox.focus();
+          radioOrCheckbox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          radioOrCheckbox.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          radioOrCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          radioOrCheckbox.click();
+
+          // Trigger change event
+          radioOrCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          // Check if dropdown closed
+          const dropdownClosed = submenuOption.offsetParent === null;
+          if (dropdownClosed) {
+            console.log(`[AutoFeel] ✅ Radio/checkbox click worked - dropdown closed`);
+            return true;
+          } else {
+            console.log(`[AutoFeel] ⚠️ Dropdown still open after radio click`);
+          }
+        } else {
+          console.log(`[AutoFeel] ⚠️ No radio/checkbox found inside option, trying direct option click`);
+
+          // Fallback: Click the option itself
+          submenuOption.focus();
+          submenuOption.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          submenuOption.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          submenuOption.click();
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return true;
+      } else {
+        console.warn(`[AutoFeel] ⚠️ Could not find submenu option: "${submenuResult.answer}"`);
+        return false;
+      }
+    } else {
+      console.warn(`[AutoFeel] ⚠️ Failed to get LLM selection for submenu. Result:`, submenuResult);
+      return false;
+    }
   } else {
-    // This is a leaf option or the last in our path, finalize selection
-    console.log(`[AutoFeel] 🎯 Leaf option or end of path, finalizing selection`);
-
-    matchedOption.click();
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    // If we haven't reached the end of path but there's no submenu,
-    // the remaining segments might be in a cascading dropdown (handled by dynamic detection)
+    // No submenu or already at the end of path
+    console.log(`[AutoFeel] 🎯 No submenu appeared or reached end of path`);
     return true;
   }
 }
