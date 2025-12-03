@@ -386,8 +386,38 @@ async function detectDynamicDropdownOptions(fieldId) {
     // Wait for dropdown to appear and options to load
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // Find the listbox container for scrolling
+    // Find the scrollable container (might be listbox itself or a parent)
+    let scrollContainer = null;
     const listbox = document.querySelector('[role="listbox"]');
+    console.log(`[AutoFeel] Listbox element:`, listbox ? `Found (tag: ${listbox.tagName})` : 'NOT FOUND');
+
+    if (listbox) {
+      // Try to find the actual scrollable container
+      // Check listbox itself first
+      if (listbox.scrollHeight > listbox.clientHeight) {
+        scrollContainer = listbox;
+        console.log(`[AutoFeel] Scroll container: listbox itself`);
+      } else {
+        // Check parent elements up to 5 levels
+        let parent = listbox.parentElement;
+        let depth = 0;
+        while (parent && depth < 5) {
+          const hasOverflow = window.getComputedStyle(parent).overflowY !== 'visible';
+          if (hasOverflow && parent.scrollHeight > parent.clientHeight) {
+            scrollContainer = parent;
+            console.log(`[AutoFeel] Scroll container: parent element at depth ${depth} (tag: ${parent.tagName}, class: ${parent.className})`);
+            break;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+
+        if (!scrollContainer) {
+          console.warn(`[AutoFeel] No scrollable parent found, using listbox anyway`);
+          scrollContainer = listbox;
+        }
+      }
+    }
 
     // Collect all unique options (for virtual scrolling)
     const allOptions = new Map(); // Use Map to track unique options by text
@@ -427,12 +457,14 @@ async function detectDynamicDropdownOptions(fieldId) {
     console.log(`[AutoFeel] Initial options: ${initialCount}`);
 
     // Progressive scrolling to load all options (for virtual scrolling)
-    if (listbox) {
-      const scrollHeight = listbox.scrollHeight;
-      const clientHeight = listbox.clientHeight;
+    if (scrollContainer) {
+      const scrollHeight = scrollContainer.scrollHeight;
+      const clientHeight = scrollContainer.clientHeight;
+
+      console.log(`[AutoFeel] Scroll container dimensions: scrollHeight=${scrollHeight}px, clientHeight=${clientHeight}px, scrollable=${scrollHeight > clientHeight}`);
 
       if (scrollHeight > clientHeight) {
-        console.log(`[AutoFeel] Progressive scrolling to load all options...`);
+        console.log(`[AutoFeel] 📜 Starting progressive scrolling to load all options...`);
 
         const scrollStep = clientHeight * 0.8; // Scroll 80% of visible height each time
         let currentScroll = 0;
@@ -443,7 +475,7 @@ async function detectDynamicDropdownOptions(fieldId) {
 
           // Scroll down
           currentScroll += scrollStep;
-          listbox.scrollTop = currentScroll;
+          scrollContainer.scrollTop = currentScroll;
 
           // Wait for new options to render
           await new Promise(resolve => setTimeout(resolve, 200));
@@ -462,17 +494,21 @@ async function detectDynamicDropdownOptions(fieldId) {
           }
 
           // Update scrollHeight in case it changed
-          if (listbox.scrollHeight !== scrollHeight) {
+          if (scrollContainer.scrollHeight !== scrollHeight) {
             break; // Scroll height changed, likely loaded all
           }
         }
 
         // Scroll back to top
-        listbox.scrollTop = 0;
+        scrollContainer.scrollTop = 0;
         await new Promise(resolve => setTimeout(resolve, 200));
 
         console.log(`[AutoFeel] Scrolling complete. Found ${allOptions.size} unique options (initial: ${initialCount})`);
+      } else {
+        console.log(`[AutoFeel] ⚠️ No scrolling needed (all options visible or container not scrollable)`);
       }
+    } else {
+      console.warn(`[AutoFeel] ⚠️ Scroll container not found! Cannot perform scrolling to load all options.`);
     }
 
     // Convert Map to array of elements

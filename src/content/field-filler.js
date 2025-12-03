@@ -9,13 +9,19 @@ async function fillSingleField(fieldId, fieldData) {
     return;
   }
 
+  console.log(`[AutoFeel Filler] Starting fillSingleField for ${fieldId}, fieldData:`, fieldData);
+
   // Extract answer and explanation
   const answer = typeof fieldData === 'string' ? fieldData : fieldData.answer;
   const explanation = typeof fieldData === 'object' ? fieldData.explanation : null;
 
+  console.log(`[AutoFeel Filler] Extracted answer: "${answer}", explanation:`, explanation);
+
   // Get field type info first
   const fieldType = input.tagName.toLowerCase();
   const inputType = input.type ? input.type.toLowerCase() : '';
+
+  console.log(`[AutoFeel Filler] Field type: ${fieldType}, input type: ${inputType}`);
 
   // Mark field as filled IMMEDIATELY to prevent re-detection
   input.dataset.autofeelFilled = 'true';
@@ -27,6 +33,7 @@ async function fillSingleField(fieldId, fieldData) {
 
   // Handle empty answers with hint
   if (!answer || answer.trim() === '') {
+    console.warn(`[AutoFeel Filler] Empty answer, showing hint`);
     await showEmptyFieldHint(input, fieldId, explanation);
     return;
   }
@@ -42,20 +49,30 @@ async function fillSingleField(fieldId, fieldData) {
   const isButtonSelect =
     input.tagName === 'BUTTON' && (input.getAttribute('aria-haspopup') === 'listbox' || input.getAttribute('aria-haspopup') === 'true');
 
+  console.log(`[AutoFeel Filler] isSearchableSelect: ${isSearchableSelect}, isButtonSelect: ${isButtonSelect}`);
+
   if (isSearchableSelect) {
+    console.log(`[AutoFeel Filler] Calling fillSearchableSelect with answer: "${answer}"`);
     await fillSearchableSelect(input, answer);
   } else if (isButtonSelect) {
+    console.log(`[AutoFeel Filler] Calling fillButtonSelect with answer: "${answer}"`);
     await fillButtonSelect(input, answer);
   } else if (fieldType === 'select') {
+    console.log(`[AutoFeel Filler] Calling fillSelectField with answer: "${answer}"`);
     await fillSelectField(input, answer);
   } else if (inputType === 'checkbox') {
+    console.log(`[AutoFeel Filler] Calling fillCheckboxField with answer: "${answer}"`);
     await fillCheckboxField(input, answer);
   } else if (inputType === 'radio') {
+    console.log(`[AutoFeel Filler] Calling fillRadioField with answer: "${answer}"`);
     await fillRadioField(input, answer);
   } else {
+    console.log(`[AutoFeel Filler] Calling fillFieldWithAnimation with answer: "${answer}"`);
     // Text input, textarea, etc.
     await fillFieldWithAnimation(input, answer);
   }
+
+  console.log(`[AutoFeel Filler] Finished fillSingleField for ${fieldId}`);
 }
 
 async function showEmptyFieldHint(input, _fieldId, explanation) {
@@ -249,32 +266,106 @@ async function selectFromDropdown(trigger, answerPath, depth = 0) {
 
   if (preCheckOptions.length > 0 && depth === 0) {
     isAlreadyOpen = true;
-    console.log(`[AutoFeel] Dropdown already open, skipping open step`);
+    console.log(`[AutoFeel] Dropdown already open with ${preCheckOptions.length} visible options`);
   }
 
-  // Only open dropdown if not already open
-  if (!isAlreadyOpen) {
-    // Focus and click the trigger to open dropdown
-    if (trigger.tagName === 'INPUT') {
-      trigger.focus();
-      trigger.click();
+  // Strategy 1: Use search box to filter (works even if dropdown is already open)
+  if (trigger.tagName === 'INPUT' && depth === 0) {
+    console.log(`[AutoFeel] Strategy 1: Using search box to filter options for "${currentAnswer}"`);
 
-      // Type search text for input-based dropdowns
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeInputValueSetter.call(trigger, currentAnswer);
+    // Focus and click to ensure dropdown is open
+    trigger.focus();
+    trigger.click();
 
-      // Trigger events
+    // Clear any existing search text first
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    if (trigger.value && trigger.value.trim().length > 0) {
+      console.log(`[AutoFeel] Clearing existing search text: "${trigger.value}"`);
+      nativeInputValueSetter.call(trigger, '');
       trigger.dispatchEvent(new Event('input', { bubbles: true }));
-      trigger.dispatchEvent(new Event('change', { bubbles: true }));
-      trigger.dispatchEvent(new Event('keydown', { bubbles: true }));
-      trigger.dispatchEvent(new Event('keyup', { bubbles: true }));
-    } else if (trigger.tagName === 'BUTTON') {
-      // For button-based selects, just focus and click (no typing)
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+
+    console.log(`[AutoFeel] Typing search text: "${currentAnswer}"`);
+
+    // Set the full search text at once
+    nativeInputValueSetter.call(trigger, currentAnswer);
+    trigger.dispatchEvent(new Event('input', { bubbles: true }));
+
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Press Enter to trigger search (critical for non-real-time filtering)
+    console.log(`[AutoFeel] Pressing Enter to trigger search...`);
+    trigger.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    }));
+    trigger.dispatchEvent(new KeyboardEvent('keypress', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    }));
+    trigger.dispatchEvent(new KeyboardEvent('keyup', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    }));
+
+    // Wait for search results to appear
+    console.log(`[AutoFeel] Waiting for search results...`);
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    console.log(`[AutoFeel] Search complete. Current input value: "${trigger.value}"`);
+
+    // Check if Enter already selected the option
+    // Signs of successful selection:
+    // 1. Dropdown closed
+    // 2. Input value changed to something else (not the search text)
+    // 3. Input value cleared (empty string) - this often means selection succeeded
+    // 4. An option is marked as selected (aria-selected="true")
+
+    const dropdownOptions = document.querySelectorAll('[role="listbox"], [role="option"]');
+    const dropdownStillOpen = dropdownOptions.length > 0;
+    const inputCleared = trigger.value === '';
+    const inputValueChanged = trigger.value !== currentAnswer && trigger.value.trim().length > 0;
+    const hasSelectedOption = Array.from(document.querySelectorAll('[role="option"]'))
+      .some(opt => opt.getAttribute('aria-selected') === 'true');
+
+    if (!dropdownStillOpen || inputValueChanged || (inputCleared && hasSelectedOption)) {
+      console.log(`[AutoFeel] ✅ Selection completed by Enter key (dropdown closed: ${!dropdownStillOpen}, value changed: ${inputValueChanged}, has selected: ${hasSelectedOption})`);
+      return true; // Successfully selected, no need to click
+    }
+
+    // Additional check: if input was cleared but we're not sure about selection, wait a bit more
+    if (inputCleared) {
+      console.log(`[AutoFeel] Input cleared after Enter, waiting to see if dropdown closes...`);
+      await new Promise(resolve => setTimeout(resolve, 600));
+
+      const dropdownStillOpenAfterWait = document.querySelectorAll('[role="listbox"], [role="option"]').length > 0;
+      if (!dropdownStillOpenAfterWait) {
+        console.log(`[AutoFeel] ✅ Dropdown closed after waiting, selection successful`);
+        return true;
+      }
+    }
+
+    console.log(`[AutoFeel] Dropdown still open and no selection detected, proceeding to click option...`);
+  } else if (!isAlreadyOpen) {
+    // Strategy 2: Open dropdown without search (for buttons or nested menus)
+    if (trigger.tagName === 'BUTTON') {
       trigger.focus();
       trigger.click();
       trigger.dispatchEvent(new Event('click', { bubbles: true }));
     } else {
-      // For option elements (nested menus)
       trigger.click();
     }
 
@@ -299,16 +390,127 @@ async function selectFromDropdown(trigger, answerPath, depth = 0) {
     return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
   });
 
+  console.log(`[AutoFeel] Found ${options.length} visible options after filtering`);
+
+  // Log first few options to debug filtering
+  if (options.length > 0 && trigger.tagName === 'INPUT' && depth === 0) {
+    console.log(`[AutoFeel] First 5 filtered options:`, options.slice(0, 5).map(o => o.textContent.trim()));
+  }
+
   if (options.length === 0) {
     console.warn(`[AutoFeel] No visible options found at level ${depth}`);
     return false;
   }
 
   // Find matching option
-  const matchedOption = findMatchingOption(options, currentAnswer);
+  let matchedOption = findMatchingOption(options, currentAnswer);
+
+  // If no match and we used search, the search might not have worked
+  if (!matchedOption && trigger.tagName === 'INPUT' && depth === 0) {
+    console.warn(`[AutoFeel] ⚠️ Search box didn't filter correctly. Options visible: ${options.length}, but none match "${currentAnswer}"`);
+  }
+
+  // Strategy 2: If no match found after search filtering, clear search and try browsing all options
+  if (!matchedOption && trigger.tagName === 'INPUT' && depth === 0) {
+    console.log(`[AutoFeel] Strategy 2: Search filtering didn't find match, clearing search box and loading all options...`);
+
+    // Clear search box
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeInputValueSetter.call(trigger, '');
+    trigger.dispatchEvent(new Event('input', { bubbles: true }));
+    trigger.dispatchEvent(new Event('change', { bubbles: true }));
+
+    // Wait for all options to reload
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Find the listbox container for scrolling
+    const listbox = document.querySelector('[role="listbox"]');
+
+    if (listbox) {
+      // Collect all unique options by progressive scrolling
+      const allOptions = new Map();
+
+      // Helper function to collect currently visible options
+      function collectVisibleOptions() {
+        let optionEls = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"], [role="option"]'));
+        optionEls = optionEls.filter(opt => {
+          const style = window.getComputedStyle(opt);
+          return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+        });
+
+        optionEls.forEach(opt => {
+          const text = opt.textContent.trim();
+          if (text && !allOptions.has(text)) {
+            allOptions.set(text, opt);
+          }
+        });
+
+        return optionEls.length;
+      }
+
+      // Collect initial visible options
+      collectVisibleOptions();
+      const initialCount = allOptions.size;
+      console.log(`[AutoFeel] Initial options after clearing search: ${initialCount}`);
+
+      // Progressive scrolling to load all options
+      const scrollHeight = listbox.scrollHeight;
+      const clientHeight = listbox.clientHeight;
+
+      if (scrollHeight > clientHeight) {
+        console.log(`[AutoFeel] Scrolling to load all options (virtual scrolling detected)...`);
+
+        const scrollStep = clientHeight * 0.8;
+        let currentScroll = 0;
+        let stableCount = 0;
+
+        while (currentScroll < scrollHeight && stableCount < 3) {
+          const previousCount = allOptions.size;
+
+          currentScroll += scrollStep;
+          listbox.scrollTop = currentScroll;
+
+          await new Promise(resolve => setTimeout(resolve, 200));
+
+          const visibleCount = collectVisibleOptions();
+          const newCount = allOptions.size;
+
+          console.log(`[AutoFeel] Scrolled to ${currentScroll}px: ${newCount} total options (${visibleCount} visible)`);
+
+          if (newCount === previousCount) {
+            stableCount++;
+          } else {
+            stableCount = 0;
+          }
+
+          if (listbox.scrollHeight !== scrollHeight) {
+            break;
+          }
+        }
+
+        // Scroll back to top
+        listbox.scrollTop = 0;
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        console.log(`[AutoFeel] Scrolling complete. Found ${allOptions.size} total options (initial: ${initialCount})`);
+      }
+
+      // Update options array with all collected options
+      options = Array.from(allOptions.values());
+
+      // Try to find match again
+      matchedOption = findMatchingOption(options, currentAnswer);
+
+      if (matchedOption) {
+        console.log(`[AutoFeel] ✅ Found match after loading all options!`);
+      } else {
+        console.warn(`[AutoFeel] ❌ Still no match found even after loading all ${options.length} options`);
+      }
+    }
+  }
 
   if (!matchedOption) {
-    console.warn(`[AutoFeel] No match found for "${currentAnswer}"`);
+    console.warn(`[AutoFeel] No match found for "${currentAnswer}" in ${options.length} options`);
     return false;
   }
 
@@ -322,8 +524,17 @@ async function selectFromDropdown(trigger, answerPath, depth = 0) {
   // Store original options before clicking
   const originalOptionTexts = options.map(o => o.textContent.trim());
 
-  // Click the option
-  matchedOption.click();
+  // Click the option - prioritize clicking radio/checkbox inside if present
+  const radioOrCheckbox = matchedOption.querySelector('input[type="radio"], input[type="checkbox"]');
+  if (radioOrCheckbox) {
+    console.log(`[AutoFeel] Clicking radio/checkbox inside option`);
+    radioOrCheckbox.focus();
+    radioOrCheckbox.click();
+    radioOrCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    console.log(`[AutoFeel] Clicking option directly`);
+    matchedOption.click();
+  }
 
   // Wait for potential submenu to appear
   await new Promise(resolve => setTimeout(resolve, 800));

@@ -366,18 +366,20 @@ async function handleAutoFillForm() {
       await notifyTab(tab.id, `Filling ${totalFilledCount + 1}/${totalFields}: ${topField.label}`, 'loading');
 
       // Use Option+Click strategy: check if selection field or text field
-      const isSelectionField = topField.type === 'radio' ||
-                              topField.type === 'checkbox' ||
-                              topField.type === 'select' ||
-                              topField.type === 'button-select' ||
-                              topField.isDynamicDropdown;
+      // Exclude searchable text inputs (type='text' with isDynamicDropdown) from recursive filling
+      const isSelectionField = (topField.type === 'radio' ||
+                                topField.type === 'checkbox' ||
+                                topField.type === 'select' ||
+                                topField.type === 'button-select' ||
+                                topField.isDynamicDropdown) &&
+                                !(topField.type === 'text' && topField.isDynamicDropdown);
 
       let fillResult;
       if (isSelectionField) {
         // Selection field: use recursive filling (same as Option+Click)
         fillResult = await recursiveFillFromField(tab, topField.id, savedContext, config, 0);
       } else {
-        // Text field: fill only this one field (same as Option+Click)
+        // Text field or searchable text input: fill only this one field (same as Option+Click)
         fillResult = await fillSingleFieldNonRecursive(tab, topField, savedContext, config);
       }
 
@@ -545,47 +547,73 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     // If field has options (radio/select), include them
     if (field.options && field.options.length > 0) {
-      userPrompt += `=== AVAILABLE OPTIONS ===\n`;
+      // Special handling for searchable text input dropdowns with incomplete option lists
+      // Only text inputs with search boxes can accept text answers
+      const isSearchableDropdown = field.type === 'text' && field.isDynamicDropdown;
 
-      // Check if any options have children (hierarchical structure)
-      const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
-
-      field.options.forEach((option, index) => {
-        const isCurrent = field.value && (
-          option.label.includes(field.value) ||
-          field.value.includes(option.label) ||
-          option.value === field.value
-        );
-        userPrompt += `${index + 1}. ${option.label}${isCurrent ? ' ⭐ (CURRENT)' : ''}\n`;
-
-        // If this option has children, list them
-        if (option.children && option.children.length > 0) {
-          option.children.forEach(child => {
-            userPrompt += `   → ${child.label}\n`;
-          });
+      if (isSearchableDropdown) {
+        userPrompt += `=== SEARCHABLE DROPDOWN (Options may be incomplete) ===\n`;
+        userPrompt += `This is a searchable dropdown field. The list below shows only ${field.options.length} visible options, but there may be hundreds more available through search.\n\n`;
+        userPrompt += `Sample visible options:\n`;
+        field.options.slice(0, Math.min(10, field.options.length)).forEach((option) => {
+          userPrompt += `  - ${option.label}\n`;
+        });
+        if (field.options.length > 10) {
+          userPrompt += `  ... and ${field.options.length - 10} more\n`;
         }
-      });
-      userPrompt += `\n`;
-
-      if (hasHierarchy) {
-        userPrompt += `🚨 CRITICAL REQUIREMENT FOR HIERARCHICAL OPTIONS:\n`;
-        userPrompt += `- Some options have sub-options (shown with →)\n`;
-        userPrompt += `- If you want to select a sub-option, return it as "Parent > Child" (e.g., "Job Board > LinkedIn")\n`;
-        userPrompt += `- If you want to select just the parent option, return only the parent name (e.g., "Job Board")\n`;
-        userPrompt += `- Your answer must be the FULL PATH using " > " separator\n`;
+        userPrompt += `\n`;
+        userPrompt += `🚨 CRITICAL REQUIREMENT FOR SEARCHABLE DROPDOWNS:\n`;
+        userPrompt += `- DO NOT limit yourself to the visible options above\n`;
+        userPrompt += `- Return the EXACT text answer that best matches the user's information\n`;
+        userPrompt += `- The search box will filter to find your answer among ALL available options\n`;
         userPrompt += `- Examples:\n`;
-        userPrompt += `  - To select LinkedIn under Job Board: {"answer": "Job Board > LinkedIn", "explanation": null}\n`;
-        userPrompt += `  - To select just Referral: {"answer": "Referral", "explanation": null}\n`;
-        userPrompt += `- If none fit, return empty: {"answer": "", "explanation": "reason"}\n\n`;
+        userPrompt += `  - For country phone code: {"answer": "China (+86)", "explanation": null}\n`;
+        userPrompt += `  - For country: {"answer": "United States", "explanation": null}\n`;
+        userPrompt += `  - For city: {"answer": "San Francisco", "explanation": null}\n`;
+        userPrompt += `- If you truly cannot determine the answer from context, return empty: {"answer": "", "explanation": "reason"}\n\n`;
       } else {
-        userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
-        userPrompt += `- You MUST choose from the ${field.options.length} options listed above\n`;
-        userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
-        userPrompt += `- DO NOT return text, DO NOT return the option label, DO NOT create your own answer\n`;
-        userPrompt += `- ONLY return the number (e.g., "3")\n`;
-        userPrompt += `- Use logical reasoning to pick the BEST matching option based on the context\n`;
-        userPrompt += `- If NONE of the ${field.options.length} options fit the context, return "" (empty string) and explain why\n`;
-        userPrompt += `- Example valid responses: {"answer": "2", "explanation": null} or {"answer": "", "explanation": "No option matches user's background"}\n\n`;
+        userPrompt += `=== AVAILABLE OPTIONS ===\n`;
+
+        // Check if any options have children (hierarchical structure)
+        const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
+
+        field.options.forEach((option, index) => {
+          const isCurrent = field.value && (
+            option.label.includes(field.value) ||
+            field.value.includes(option.label) ||
+            option.value === field.value
+          );
+          userPrompt += `${index + 1}. ${option.label}${isCurrent ? ' ⭐ (CURRENT)' : ''}\n`;
+
+          // If this option has children, list them
+          if (option.children && option.children.length > 0) {
+            option.children.forEach(child => {
+              userPrompt += `   → ${child.label}\n`;
+            });
+          }
+        });
+        userPrompt += `\n`;
+
+        if (hasHierarchy) {
+          userPrompt += `🚨 CRITICAL REQUIREMENT FOR HIERARCHICAL OPTIONS:\n`;
+          userPrompt += `- Some options have sub-options (shown with →)\n`;
+          userPrompt += `- If you want to select a sub-option, return it as "Parent > Child" (e.g., "Job Board > LinkedIn")\n`;
+          userPrompt += `- If you want to select just the parent option, return only the parent name (e.g., "Job Board")\n`;
+          userPrompt += `- Your answer must be the FULL PATH using " > " separator\n`;
+          userPrompt += `- Examples:\n`;
+          userPrompt += `  - To select LinkedIn under Job Board: {"answer": "Job Board > LinkedIn", "explanation": null}\n`;
+          userPrompt += `  - To select just Referral: {"answer": "Referral", "explanation": null}\n`;
+          userPrompt += `- If none fit, return empty: {"answer": "", "explanation": "reason"}\n\n`;
+        } else {
+          userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
+          userPrompt += `- You MUST choose from the ${field.options.length} options listed above\n`;
+          userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
+          userPrompt += `- DO NOT return text, DO NOT return the option label, DO NOT create your own answer\n`;
+          userPrompt += `- ONLY return the number (e.g., "3")\n`;
+          userPrompt += `- Use logical reasoning to pick the BEST matching option based on the context\n`;
+          userPrompt += `- If NONE of the ${field.options.length} options fit the context, return "" (empty string) and explain why\n`;
+          userPrompt += `- Example valid responses: {"answer": "2", "explanation": null} or {"answer": "", "explanation": "No option matches user's background"}\n\n`;
+        }
       }
     } else {
       userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
@@ -639,10 +667,17 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
       // Check if field has hierarchical options
       const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
 
+      // Check if this is a searchable text input dropdown (can accept text answers)
+      const isSearchableTextInput = field.type === 'text' && field.isDynamicDropdown;
+
       if (hasHierarchy) {
         // For hierarchical options, accept text format like "Job Board > LinkedIn"
         console.log('[AutoFeel] ✅ Hierarchical answer:', answerStr);
         // No validation needed - contentScript's selectFromDropdown will handle the path
+      } else if (isSearchableTextInput) {
+        // For searchable text inputs ONLY, accept text answers (will be used for search)
+        console.log('[AutoFeel] ✅ Searchable text input answer:', answerStr);
+        // No validation needed - fillSearchableSelect will handle the search
       } else {
         // For non-hierarchical options, validate numeric answer
         const answerNum = parseInt(answerStr);
@@ -750,11 +785,14 @@ async function handleFillSingleFieldByClick(fieldId) {
       return;
     }
 
-    const isSelectionField = clickedField.type === 'radio' ||
-                            clickedField.type === 'checkbox' ||
-                            clickedField.type === 'select' ||
-                            clickedField.type === 'button-select' ||
-                            clickedField.isDynamicDropdown;
+    // Determine if this should use recursive filling (for fields that might trigger conditional sub-questions)
+    // Exclude searchable text inputs (type='text' with isDynamicDropdown) as they don't trigger conditional fields
+    const isSelectionField = (clickedField.type === 'radio' ||
+                              clickedField.type === 'checkbox' ||
+                              clickedField.type === 'select' ||
+                              clickedField.type === 'button-select' ||
+                              clickedField.isDynamicDropdown) &&
+                              !(clickedField.type === 'text' && clickedField.isDynamicDropdown);
 
     if (isSelectionField) {
       // This is a selection field - use recursive filling to handle conditional sub-questions
