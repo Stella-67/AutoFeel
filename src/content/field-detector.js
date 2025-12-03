@@ -279,6 +279,27 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
       return;
     }
 
+    // CRITICAL: Skip fields without labels (likely UI elements, not real form fields)
+    // Exception: Allow text inputs without labels if they have placeholder or name
+    if (!label || label.trim().length === 0) {
+      const hasPlaceholder = placeholder && placeholder.trim().length > 0;
+      const hasName = input.name && input.name.trim().length > 0;
+      const isTextInput = fieldType === 'text' || fieldType === 'email' || fieldType === 'tel' ||
+                         fieldType === 'url' || fieldType === 'number' || fieldType === 'textarea';
+
+      // Allow text inputs with placeholder or name, but reject all others
+      if (!(isTextInput && (hasPlaceholder || hasName))) {
+        console.log(`[AutoFeel] Skipping field without label: type=${fieldType}, name=${input.name}, placeholder=${placeholder}`);
+        return;
+      }
+    }
+
+    // Skip radio buttons without name attribute (likely UI decorations, not form fields)
+    if (input.type === 'radio' && (!input.name || input.name.trim().length === 0)) {
+      console.log(`[AutoFeel] Skipping radio without name attribute (likely decoration)`);
+      return;
+    }
+
     fields.push(fieldInfo);
 
     // Only increment counter if we assigned a NEW ID
