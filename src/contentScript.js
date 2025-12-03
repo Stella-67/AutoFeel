@@ -806,32 +806,48 @@ async function selectFromDropdown(trigger, answerPath, depth = 0) {
   const currentAnswer = answerPath[depth];
   console.log(`[AutoFeel] 🔍 Level ${depth}: Looking for "${currentAnswer}"`);
 
-  // Focus and click the trigger to open dropdown
-  if (trigger.tagName === 'INPUT') {
-    trigger.focus();
-    trigger.click();
+  // Check if dropdown is already open (from option detection)
+  let isAlreadyOpen = false;
+  let preCheckOptions = Array.from(document.querySelectorAll('div[data-automation-id="promptOption"], [role="option"]'));
+  preCheckOptions = preCheckOptions.filter(opt => {
+    const style = window.getComputedStyle(opt);
+    return style.display !== 'none' && style.visibility !== 'hidden' && opt.offsetParent !== null;
+  });
 
-    // Type search text for input-based dropdowns
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    nativeInputValueSetter.call(trigger, currentAnswer);
-
-    // Trigger events
-    trigger.dispatchEvent(new Event('input', { bubbles: true }));
-    trigger.dispatchEvent(new Event('change', { bubbles: true }));
-    trigger.dispatchEvent(new Event('keydown', { bubbles: true }));
-    trigger.dispatchEvent(new Event('keyup', { bubbles: true }));
-  } else if (trigger.tagName === 'BUTTON') {
-    // For button-based selects, just focus and click (no typing)
-    trigger.focus();
-    trigger.click();
-    trigger.dispatchEvent(new Event('click', { bubbles: true }));
-  } else {
-    // For option elements (nested menus)
-    trigger.click();
+  if (preCheckOptions.length > 0 && depth === 0) {
+    isAlreadyOpen = true;
+    console.log(`[AutoFeel] ✨ Dropdown already open with ${preCheckOptions.length} options, skipping open step`);
   }
 
-  // Wait for dropdown to appear
-  await new Promise(resolve => setTimeout(resolve, 500));
+  // Only open dropdown if not already open
+  if (!isAlreadyOpen) {
+    // Focus and click the trigger to open dropdown
+    if (trigger.tagName === 'INPUT') {
+      trigger.focus();
+      trigger.click();
+
+      // Type search text for input-based dropdowns
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeInputValueSetter.call(trigger, currentAnswer);
+
+      // Trigger events
+      trigger.dispatchEvent(new Event('input', { bubbles: true }));
+      trigger.dispatchEvent(new Event('change', { bubbles: true }));
+      trigger.dispatchEvent(new Event('keydown', { bubbles: true }));
+      trigger.dispatchEvent(new Event('keyup', { bubbles: true }));
+    } else if (trigger.tagName === 'BUTTON') {
+      // For button-based selects, just focus and click (no typing)
+      trigger.focus();
+      trigger.click();
+      trigger.dispatchEvent(new Event('click', { bubbles: true }));
+    } else {
+      // For option elements (nested menus)
+      trigger.click();
+    }
+
+    // Wait for dropdown to appear
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 
   // Find visible options - try multiple selectors to support different implementations
   let options = [];

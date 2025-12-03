@@ -389,12 +389,9 @@ async function detectDynamicDropdownOptions(fieldId) {
 
     console.log(`[AutoFeel] Found ${options.length} options for ${fieldId}`);
 
-    // Close the dropdown (press Escape)
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
-    input.blur();
-
-    // Wait for dropdown to close
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // ✨ Keep dropdown open - don't close it
+    // The dropdown will be used immediately for filling, so no need to close and reopen
+    console.log(`[AutoFeel] Keeping dropdown open for immediate filling`);
 
     return options;
 
