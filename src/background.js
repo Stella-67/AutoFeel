@@ -351,7 +351,7 @@ async function handleAutoFillForm() {
       // Show progress notification
       await notifyTab(tab.id, `Filling field ${filledCount + 1}/${totalCurrent}...`, 'loading');
 
-      const answer = await generateSingleFieldAnswer(field, savedContext, config);
+      const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
 
       // Fill the field (or show hint if empty)
       if (answer.success) {
@@ -369,19 +369,28 @@ async function handleAutoFillForm() {
         }
 
         // Then try to fill
-        // Convert numeric index to option text for dynamic dropdowns
+        // Convert numeric index to option text for dynamic dropdowns (but not hierarchical ones)
         let answerToFill = answer.data;
         if (field.options && field.options.length > 0 && answer.data.answer) {
-          const answerNum = parseInt(answer.data.answer);
-          if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
-            // For dynamic dropdowns (searchable/button select), convert to option text
-            if (field.isDynamicDropdown || field.type === 'button-select') {
-              const optionText = field.options[answerNum - 1].label;
-              console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
-              answerToFill = {
-                answer: optionText,
-                explanation: answer.data.explanation
-              };
+          // Check if field has hierarchical options
+          const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
+
+          if (hasHierarchy) {
+            // For hierarchical options, answer is already text like "Job Board > LinkedIn"
+            console.log(`[AutoFeel] Hierarchical answer (no conversion needed): "${answer.data.answer}"`);
+          } else {
+            // For non-hierarchical options, convert numeric index to text
+            const answerNum = parseInt(answer.data.answer);
+            if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
+              // For dynamic dropdowns (searchable/button select), convert to option text
+              if (field.isDynamicDropdown || field.type === 'button-select') {
+                const optionText = field.options[answerNum - 1].label;
+                console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
+                answerToFill = {
+                  answer: optionText,
+                  explanation: answer.data.explanation
+                };
+              }
             }
           }
         }
@@ -454,10 +463,19 @@ async function handleAutoFillForm() {
 
 // ==================== Single Field Answer Generation ====================
 
-async function generateSingleFieldAnswer(field, savedContext, config) {
+async function generateSingleFieldAnswer(field, savedContext, config, tab) {
   const { llmProvider, apiKey, apiEndpoint, modelName } = config;
 
   try {
+    // Use the tab passed from handleAutoFillForm
+    if (!tab) {
+      console.error('[AutoFeel] No tab provided');
+      return {
+        success: false,
+        error: 'No tab provided'
+      };
+    }
+
     // ==================== RAG: Retrieve Relevant Knowledge ====================
     let retrievedContext = '';
     const queryText = `${field.label || ''} ${field.placeholder || ''}`.trim();
@@ -505,27 +523,37 @@ Content: ${chunk.text}`;
     }
 
     // ==================== Detect Dynamic Dropdown Options ====================
-    // If this is a dynamic dropdown without options, detect them now
-    if (field.isDynamicDropdown && (!field.options || field.options.length === 0)) {
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab) {
-          console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${field.id}`);
-          const response = await chrome.tabs.sendMessage(tab.id, {
-            type: 'DETECT_DROPDOWN_OPTIONS',
-            fieldId: field.id
-          });
+    // DEBUG: Log field state
+    console.log(`[AutoFeel DEBUG] Field: ${field.id}, type: ${field.type}, isDynamicDropdown: ${field.isDynamicDropdown}, options: ${field.options ? field.options.length : 'undefined'}`);
 
-          if (response && response.success && response.options && response.options.length > 0) {
-            field.options = response.options;
-            console.log(`[AutoFeel] ✓ Detected ${field.options.length} options for ${field.id}`);
-          } else {
-            console.warn(`[AutoFeel] ⚠️ Failed to detect options for ${field.id}`);
-          }
+    // If this is a dynamic dropdown without options, detect them now
+    const needsDetection = field.isDynamicDropdown && (!field.options || field.options.length === 0);
+    console.log(`[AutoFeel DEBUG] Needs detection: ${needsDetection}`);
+
+    if (needsDetection) {
+      console.log(`[AutoFeel DEBUG] Entering detection block for ${field.id}`);
+      try {
+        // Use the tab we got at the beginning of the function
+        console.log(`[AutoFeel DEBUG] Using tab: ${tab.id}`);
+        console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${field.id}`);
+        const response = await chrome.tabs.sendMessage(tab.id, {
+          type: 'DETECT_DROPDOWN_OPTIONS',
+          fieldId: field.id
+        });
+
+        console.log(`[AutoFeel DEBUG] Detection response:`, response);
+
+        if (response && response.success && response.options && response.options.length > 0) {
+          field.options = response.options;
+          console.log(`[AutoFeel] ✓ Detected ${field.options.length} options for ${field.id}`);
+        } else {
+          console.warn(`[AutoFeel] ⚠️ Failed to detect options for ${field.id}`);
         }
       } catch (detectError) {
         console.error('[AutoFeel] Error detecting dropdown options:', detectError);
       }
+    } else {
+      console.log(`[AutoFeel DEBUG] Skipping detection for ${field.id}`);
     }
 
     // ==================== Build Prompt for Single Field ====================
@@ -578,6 +606,10 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
     // If field has options (radio/select), include them
     if (field.options && field.options.length > 0) {
       userPrompt += `=== AVAILABLE OPTIONS ===\n`;
+
+      // Check if any options have children (hierarchical structure)
+      const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
+
       field.options.forEach((option, index) => {
         const isCurrent = field.value && (
           option.label.includes(field.value) ||
@@ -585,16 +617,36 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
           option.value === field.value
         );
         userPrompt += `${index + 1}. ${option.label}${isCurrent ? ' ⭐ (CURRENT)' : ''}\n`;
+
+        // If this option has children, list them
+        if (option.children && option.children.length > 0) {
+          option.children.forEach(child => {
+            userPrompt += `   → ${child.label}\n`;
+          });
+        }
       });
       userPrompt += `\n`;
-      userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
-      userPrompt += `- You MUST choose from the ${field.options.length} options listed above\n`;
-      userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
-      userPrompt += `- DO NOT return text, DO NOT return the option label, DO NOT create your own answer\n`;
-      userPrompt += `- ONLY return the number (e.g., "3")\n`;
-      userPrompt += `- Use logical reasoning to pick the BEST matching option based on the context\n`;
-      userPrompt += `- If NONE of the ${field.options.length} options fit the context, return "" (empty string) and explain why\n`;
-      userPrompt += `- Example valid responses: {"answer": "2", "explanation": null} or {"answer": "", "explanation": "No option matches user's background"}\n\n`;
+
+      if (hasHierarchy) {
+        userPrompt += `🚨 CRITICAL REQUIREMENT FOR HIERARCHICAL OPTIONS:\n`;
+        userPrompt += `- Some options have sub-options (shown with →)\n`;
+        userPrompt += `- If you want to select a sub-option, return it as "Parent > Child" (e.g., "Job Board > LinkedIn")\n`;
+        userPrompt += `- If you want to select just the parent option, return only the parent name (e.g., "Job Board")\n`;
+        userPrompt += `- Your answer must be the FULL PATH using " > " separator\n`;
+        userPrompt += `- Examples:\n`;
+        userPrompt += `  - To select LinkedIn under Job Board: {"answer": "Job Board > LinkedIn", "explanation": null}\n`;
+        userPrompt += `  - To select just Referral: {"answer": "Referral", "explanation": null}\n`;
+        userPrompt += `- If none fit, return empty: {"answer": "", "explanation": "reason"}\n\n`;
+      } else {
+        userPrompt += `🚨 CRITICAL REQUIREMENT - READ CAREFULLY:\n`;
+        userPrompt += `- You MUST choose from the ${field.options.length} options listed above\n`;
+        userPrompt += `- Your "answer" field MUST be ONLY a number from 1 to ${field.options.length}\n`;
+        userPrompt += `- DO NOT return text, DO NOT return the option label, DO NOT create your own answer\n`;
+        userPrompt += `- ONLY return the number (e.g., "3")\n`;
+        userPrompt += `- Use logical reasoning to pick the BEST matching option based on the context\n`;
+        userPrompt += `- If NONE of the ${field.options.length} options fit the context, return "" (empty string) and explain why\n`;
+        userPrompt += `- Example valid responses: {"answer": "2", "explanation": null} or {"answer": "", "explanation": "No option matches user's background"}\n\n`;
+      }
     } else {
       userPrompt += `Please answer this question based on the context. Be concise and relevant.\n\n`;
     }
@@ -640,27 +692,36 @@ If you cannot answer, set answer to "" and provide a brief explanation of why.`;
 
     // ==================== Validate Option Fields ====================
 
-    // If this is an option field (select/radio), ensure answer is a valid number or empty
+    // If this is an option field (select/radio), validate the answer
     if (field.options && field.options.length > 0 && result.answer) {
       const answerStr = String(result.answer).trim();
-      const answerNum = parseInt(answerStr);
 
-      // Check if answer is a valid option number
-      const isValidNumber = !isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length;
+      // Check if field has hierarchical options
+      const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
 
-      if (!isValidNumber) {
-        // LLM returned invalid answer - reject it
-        console.error(`[AutoFeel] ❌ LLM returned invalid answer for option field: "${answerStr}"`);
-        console.error(`[AutoFeel] Expected: number 1-${field.options.length} or empty string ""`);
-        console.error('[AutoFeel] Available options:', field.options.map((o, i) => `${i+1}. ${o.label}`).join(', '));
-
-        // Force empty answer with explanation
-        result.answer = '';
-        if (!result.explanation) {
-          result.explanation = `LLM returned invalid answer format. Expected option number 1-${field.options.length}.`;
-        }
+      if (hasHierarchy) {
+        // For hierarchical options, accept text format like "Job Board > LinkedIn"
+        console.log('[AutoFeel] ✅ Hierarchical answer:', answerStr);
+        // No validation needed - contentScript's selectFromDropdown will handle the path
       } else {
-        console.log('[AutoFeel] ✅ Valid option number:', answerNum);
+        // For non-hierarchical options, validate numeric answer
+        const answerNum = parseInt(answerStr);
+        const isValidNumber = !isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length;
+
+        if (!isValidNumber) {
+          // LLM returned invalid answer - reject it
+          console.error(`[AutoFeel] ❌ LLM returned invalid answer for option field: "${answerStr}"`);
+          console.error(`[AutoFeel] Expected: number 1-${field.options.length} or empty string ""`);
+          console.error('[AutoFeel] Available options:', field.options.map((o, i) => `${i+1}. ${o.label}`).join(', '));
+
+          // Force empty answer with explanation
+          result.answer = '';
+          if (!result.explanation) {
+            result.explanation = `LLM returned invalid answer format. Expected option number 1-${field.options.length}.`;
+          }
+        } else {
+          console.log('[AutoFeel] ✅ Valid option number:', answerNum);
+        }
       }
     }
 
@@ -759,25 +820,34 @@ async function handleFillSingleFieldByClick(fieldId) {
     await notifyTab(tab.id, `Generating answer for "${field.label}"...`, 'loading');
 
     // Generate answer for this single field
-    const answer = await generateSingleFieldAnswer(field, savedContext, config);
+    const answer = await generateSingleFieldAnswer(field, savedContext, config, tab);
 
     if (!answer.success) {
       await notifyTab(tab.id, `Failed to generate answer: ${answer.error}`, 'error');
       return;
     }
 
-    // Convert numeric index to option text for dynamic dropdowns
+    // Convert numeric index to option text for dynamic dropdowns (but not hierarchical ones)
     let answerToFill = answer.data;
     if (field.options && field.options.length > 0 && answer.data.answer) {
-      const answerNum = parseInt(answer.data.answer);
-      if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
-        if (field.isDynamicDropdown || field.type === 'button-select') {
-          const optionText = field.options[answerNum - 1].label;
-          console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
-          answerToFill = {
-            answer: optionText,
-            explanation: answer.data.explanation
-          };
+      // Check if field has hierarchical options
+      const hasHierarchy = field.options.some(opt => opt.children && opt.children.length > 0);
+
+      if (hasHierarchy) {
+        // For hierarchical options, answer is already text like "Job Board > LinkedIn"
+        console.log(`[AutoFeel] Hierarchical answer (no conversion needed): "${answer.data.answer}"`);
+      } else {
+        // For non-hierarchical options, convert numeric index to text
+        const answerNum = parseInt(answer.data.answer);
+        if (!isNaN(answerNum) && answerNum >= 1 && answerNum <= field.options.length) {
+          if (field.isDynamicDropdown || field.type === 'button-select') {
+            const optionText = field.options[answerNum - 1].label;
+            console.log(`[AutoFeel] Converting index ${answerNum} to option text: "${optionText}"`);
+            answerToFill = {
+              answer: optionText,
+              explanation: answer.data.explanation
+            };
+          }
         }
       }
     }

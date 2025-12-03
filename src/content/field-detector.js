@@ -340,6 +340,35 @@ async function detectDynamicDropdownOptions(fieldId) {
   console.log(`[AutoFeel] Detecting options for dynamic dropdown: ${fieldId}`);
 
   try {
+    // CRITICAL: Close ALL open dropdowns first to avoid detecting wrong options
+    console.log(`[AutoFeel] Closing all open dropdowns before detecting options for ${fieldId}...`);
+
+    // Method 1: Press Escape multiple times
+    for (let i = 0; i < 3; i++) {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        code: 'Escape',
+        keyCode: 27,
+        bubbles: true,
+        cancelable: true
+      }));
+    }
+
+    // Method 2: Click on document body to close any open menus
+    document.body.click();
+
+    // Method 3: Remove focus from any active element
+    if (document.activeElement && document.activeElement !== document.body) {
+      document.activeElement.blur();
+    }
+
+    // Wait longer for dropdowns to close completely
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    // Verify no dropdowns are open
+    const openMenus = document.querySelectorAll('[role="listbox"], [role="menu"]');
+    console.log(`[AutoFeel] After cleanup: ${openMenus.length} dropdown(s) still visible`);
+
     // Open the dropdown
     if (input.tagName === 'INPUT') {
       input.focus();
@@ -449,8 +478,11 @@ async function detectDynamicDropdownOptions(fieldId) {
     // Convert Map to array of elements
     const optionElements = Array.from(allOptions.values());
 
-    // Extract option data
-    const options = optionElements.map((opt, index) => {
+    // Extract option data with hierarchical structure
+    const options = [];
+
+    for (let index = 0; index < optionElements.length; index++) {
+      const opt = optionElements[index];
       const label = opt.textContent.trim() ||
                     opt.getAttribute('data-automation-label') ||
                     opt.getAttribute('aria-label') ||
@@ -459,10 +491,64 @@ async function detectDynamicDropdownOptions(fieldId) {
 
       const value = opt.getAttribute('value') || label;
 
-      return { label, value };
-    });
+      const optionData = { label, value };
 
-    console.log(`[AutoFeel] Found ${options.length} options for ${fieldId}`);
+      // ALWAYS try to detect children by hovering, regardless of ARIA attributes
+      // This is more reliable for complex dropdown systems
+      try {
+        // Store initial option count
+        const initialOptionCount = allOptions.size;
+
+        // Hover over the option to potentially reveal submenu
+        opt.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        opt.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+        // Wait for submenu to appear (if any)
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Check if new options appeared (indicating a submenu)
+        const currentOptions = Array.from(document.querySelectorAll('[role="option"]'))
+          .filter(subOpt => {
+            const style = window.getComputedStyle(subOpt);
+            return style.display !== 'none' &&
+                   style.visibility !== 'hidden' &&
+                   subOpt.offsetParent !== null &&
+                   !allOptions.has(subOpt.textContent.trim()); // Exclude parent options
+          });
+
+        // If new options appeared, they're children of this option
+        if (currentOptions.length > initialOptionCount) {
+          const children = currentOptions
+            .filter(subOpt => !allOptions.has(subOpt.textContent.trim()))
+            .map(subOpt => ({
+              label: subOpt.textContent.trim(),
+              value: subOpt.getAttribute('value') || subOpt.textContent.trim()
+            }));
+
+          if (children.length > 0) {
+            optionData.children = children;
+            console.log(`[AutoFeel] ✨ Found ${children.length} submenu options under "${label}":`,
+                        children.map(c => c.label).join(', '));
+          }
+        }
+
+        // Move mouse away to close submenu
+        opt.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 150));
+      } catch (subError) {
+        console.warn(`[AutoFeel] Error detecting submenu for "${label}":`, subError);
+      }
+
+      options.push(optionData);
+    }
+
+    console.log(`[AutoFeel] Found ${options.length} options for ${fieldId} (including hierarchical)`);
+
+    // Log hierarchical structure
+    const hierarchicalCount = options.filter(o => o.children).length;
+    if (hierarchicalCount > 0) {
+      console.log(`[AutoFeel] ${hierarchicalCount} options have submenus`);
+    }
 
     // ✨ Keep dropdown open - don't close it
     // The dropdown will be used immediately for filling, so no need to close and reopen
