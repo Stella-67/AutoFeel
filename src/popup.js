@@ -32,11 +32,20 @@ const elements = {
 // Model lists for different providers
 const modelOptions = {
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o (Latest, Recommended)' },
+    { value: 'gpt-5.1', label: 'GPT-5.1 (Latest, Most Capable)' },
+    { value: 'gpt-5.1-codex', label: 'GPT-5.1 Codex (Best for Coding)' },
+    { value: 'gpt-5.1-codex-mini', label: 'GPT-5.1 Codex Mini (Faster Coding)' },
+    { value: 'chatgpt-4o-latest', label: 'ChatGPT-4o Latest (Recommended)' },
+    { value: 'gpt-4o', label: 'GPT-4o (Flagship Model)' },
+    { value: 'gpt-4o-2024-08-06', label: 'GPT-4o (2024-08-06)' },
+    { value: 'gpt-4o-2024-05-13', label: 'GPT-4o (2024-05-13)' },
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Faster, Cheaper)' },
+    { value: 'gpt-4o-mini-2024-07-18', label: 'GPT-4o Mini (2024-07-18)' },
+    { value: 'o3-mini', label: 'o3-mini (Reasoning Model)' },
     { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+    { value: 'gpt-4-turbo-2024-04-09', label: 'GPT-4 Turbo (2024-04-09)' },
     { value: 'gpt-4', label: 'GPT-4' },
-    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Cheapest)' }
+    { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo (Legacy)' }
   ],
   anthropic: [
     { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Latest, Recommended)' },
@@ -124,7 +133,7 @@ function fillDefaultValues(provider) {
   const defaults = {
     openai: {
       endpoint: 'https://api.openai.com/v1/chat/completions',
-      model: 'gpt-4o'
+      model: 'chatgpt-4o-latest'
     },
     anthropic: {
       endpoint: 'https://api.anthropic.com/v1/messages',

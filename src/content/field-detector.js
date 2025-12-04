@@ -147,7 +147,22 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
 
     // Method 5: Use aria-label
     if (!label && input.getAttribute('aria-label')) {
-      label = input.getAttribute('aria-label');
+      let ariaLabel = input.getAttribute('aria-label');
+
+      // Clean up aria-label: remove instructional text
+      // Examples:
+      // "Editor content;Press Alt+F1 for Accessibility Options." -> "Editor content"
+      // "Terminal input" -> "Terminal input" (unchanged)
+      ariaLabel = ariaLabel
+        .split(';')[0]  // Remove text after semicolon
+        .split(',')[0]  // Remove text after comma
+        .replace(/Press .+ for .+/gi, '')  // Remove "Press X for Y" instructions
+        .replace(/\(.+\)/g, '')  // Remove text in parentheses
+        .trim();
+
+      if (ariaLabel.length > 0) {
+        label = ariaLabel;
+      }
     }
 
     // Method 6: Use title attribute
@@ -158,6 +173,31 @@ function detectFormFields(excludeFieldIds = [], afterFieldId = null, onlyUnfille
     // Method 7: Use name attribute as fallback
     if (!label && input.name) {
       label = input.name.replace(/[_-]/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+    }
+
+    // Method 8: Special handling for Monaco Editor (code editors)
+    // Try to extract file name from active tab or fallback to "Code Editor"
+    if (input.classList.contains('inputarea') && input.closest('.monaco-editor')) {
+      const activeTab = input.closest('.pane-container')?.querySelector('.tbb-tab.active .tbb-tab-title');
+      if (activeTab) {
+        const fileName = activeTab.textContent.trim();
+        label = fileName ? `Code: ${fileName}` : 'Code Editor';
+      } else if (!label || label === 'Editor content') {
+        label = 'Code Editor';
+      }
+    }
+
+    // Method 9: Special handling for Terminal
+    // Try to extract terminal prompt from active tab or fallback to "Terminal"
+    if (input.classList.contains('inputHost_Eupgu') ||
+        (input.getAttribute('aria-label')?.toLowerCase().includes('terminal'))) {
+      const terminalTab = input.closest('.pane-container')?.querySelector('.tbb-tab.active .tbb-tab-title');
+      if (terminalTab) {
+        const terminalLabel = terminalTab.textContent.trim();
+        label = terminalLabel || 'Terminal';
+      } else if (!label || label === 'Terminal input') {
+        label = 'Terminal';
+      }
     }
 
     // Special handling for button-based selects

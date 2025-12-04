@@ -5,12 +5,12 @@
   "description": "Send page content to LLM for analysis using Option+C hotkey",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
     "scripting"
   ],
   "host_permissions": [
-    "https://*/*",
-    "http://*/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/background.js"
@@ -23,6 +23,11 @@
         "src/content/field-detector.js",
         "src/content/page-extractor.js",
         "src/content/field-filler.js",
+        "src/solver/text-selector.js",
+        "src/solver/problem-solver.js",
+        "src/solver/answer-filler.js",
+        "src/solver/solver-ui.js",
+        "src/solver/solver-integration.js",
         "src/contentScript.js"
       ],
       "run_at": "document_idle"

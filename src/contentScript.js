@@ -115,12 +115,12 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 });
 
-// ==================== Option + Click to Fill Single Field ====================
+// ==================== Option + Cmd + Click to Fill Single Field ====================
 
-// Add click listener for Option+Click to fill individual fields
+// Add click listener for Option+Cmd+Click to fill individual fields
 document.addEventListener('click', async (event) => {
-  // Check if Option/Alt key is pressed
-  if (!event.altKey) {
+  // Check if Option/Alt + Cmd/Meta keys are pressed
+  if (!event.altKey || !event.metaKey) {
     return;
   }
 
@@ -172,7 +172,7 @@ document.addEventListener('click', async (event) => {
   }
 
   if (!formField) {
-    console.log('[AutoFeel] Option+Click: Not a form field, ignoring');
+    console.log('[AutoFeel] Option+Cmd+Click: Not a form field, ignoring');
     return;
   }
 
@@ -180,7 +180,7 @@ document.addEventListener('click', async (event) => {
   event.preventDefault();
   event.stopPropagation();
 
-  console.log('[AutoFeel] Option+Click detected on field:', formField);
+  console.log('[AutoFeel] Option+Cmd+Click detected on field:', formField);
 
   // Check if field already has autofeel-id
   let fieldId = formField.dataset.autofeelId;

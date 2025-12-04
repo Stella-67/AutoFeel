@@ -5,23 +5,79 @@
  * Build LLM request body based on provider
  */
 function buildLLMRequestBody(provider, modelName, userPrompt, systemPrompt = null, options = {}) {
-  const { maxTokens = 1500, temperature = 0.7 } = options;
+  const { maxTokens = 1500, temperature = 0.7, screenshots = [] } = options;
+
+  // Check if we have screenshots (multi-modal request)
+  const hasImages = screenshots && screenshots.length > 0;
 
   if (provider === 'openai' || provider === 'deepseek' || provider === 'custom') {
     const messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-    messages.push({ role: 'user', content: userPrompt });
+
+    // Build user message content
+    if (hasImages) {
+      // Multi-modal: array of text and images
+      const content = [{ type: 'text', text: userPrompt }];
+      screenshots.forEach(screenshot => {
+        content.push({
+          type: 'image_url',
+          image_url: { url: screenshot } // screenshot is already data:image/png;base64,...
+        });
+      });
+      messages.push({ role: 'user', content });
+    } else {
+      // Text only
+      messages.push({ role: 'user', content: userPrompt });
+    }
+
     return { model: modelName, messages, max_tokens: maxTokens, temperature };
   } else if (provider === 'anthropic') {
     const body = {
       model: modelName,
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: userPrompt }]
+      max_tokens: maxTokens
     };
+
+    // Build user message content
+    if (hasImages) {
+      // Multi-modal: array of text and images
+      const content = [{ type: 'text', text: userPrompt }];
+      screenshots.forEach(screenshot => {
+        // Extract base64 data from data URL
+        const base64Data = screenshot.replace(/^data:image\/\w+;base64,/, '');
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/png',
+            data: base64Data
+          }
+        });
+      });
+      body.messages = [{ role: 'user', content }];
+    } else {
+      // Text only
+      body.messages = [{ role: 'user', content: userPrompt }];
+    }
+
     if (systemPrompt) body.system = systemPrompt;
     return body;
   }
-  return { model: modelName, messages: [{ role: 'user', content: userPrompt }], max_tokens: maxTokens };
+
+  // Fallback for unknown providers
+  const messages = [];
+  if (hasImages) {
+    const content = [{ type: 'text', text: userPrompt }];
+    screenshots.forEach(screenshot => {
+      content.push({
+        type: 'image_url',
+        image_url: { url: screenshot }
+      });
+    });
+    messages.push({ role: 'user', content });
+  } else {
+    messages.push({ role: 'user', content: userPrompt });
+  }
+  return { model: modelName, messages, max_tokens: maxTokens };
 }
 
 /**
