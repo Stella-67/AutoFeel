@@ -23,6 +23,7 @@
   // When batch processing is triggered (Option+X)
   textSelector.onBatchProcess = async (combinedQuestions, questionCount, screenshots) => {
     console.log(`[Solver] Processing batch of ${questionCount} questions with ${screenshots ? screenshots.length : 0} screenshots...`);
+    console.log('[Solver] Combined text:', combinedQuestions.substring(0, 200) + '...');
 
     currentQuestion = combinedQuestions;
     currentAnswer = '';

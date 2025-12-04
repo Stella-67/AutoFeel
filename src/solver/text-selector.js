@@ -335,7 +335,17 @@ class TextSelector {
 
     // Combine all questions with numbering
     let combinedText = '';
-    if (this.collectedQuestions.length > 0) {
+    if (this.collectedQuestions.length > 0 && this.screenshots.length > 0) {
+      // Both text questions and screenshots
+      combinedText = `I have ${this.collectedQuestions.length} text question(s) and ${this.screenshots.length} screenshot(s).\n\n`;
+      combinedText += '=== TEXT QUESTIONS ===\n\n';
+      combinedText += this.collectedQuestions
+        .map((q, i) => `Question ${i + 1}:\n${q}`)
+        .join('\n\n---\n\n');
+      combinedText += '\n\n=== SCREENSHOTS ===\n';
+      combinedText += `Please also refer to the ${this.screenshots.length} screenshot(s) provided below for additional context or visual information.`;
+    } else if (this.collectedQuestions.length > 0) {
+      // Only text questions, no screenshots
       combinedText = this.collectedQuestions
         .map((q, i) => `Question ${i + 1}:\n${q}`)
         .join('\n\n---\n\n');
