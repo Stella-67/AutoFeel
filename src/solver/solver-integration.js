@@ -53,6 +53,47 @@
     }
   };
 
+  // When batch processing with input context is triggered (Option+Shift+X in input field)
+  textSelector.onBatchProcessWithInput = async (combinedQuestions, questionCount, screenshots, targetField, inputContent) => {
+    console.log(`[Solver] Processing with input context. Questions: ${questionCount}, Screenshots: ${screenshots ? screenshots.length : 0}`);
+
+    try {
+      const answer = await problemSolver.solveAuto(combinedQuestions, screenshots);
+
+      if (!answer) {
+        console.log('[Solver] No answer generated');
+        textSelector.updateIndicatorError();
+        return;
+      }
+
+      // Append answer to the input field
+      if (targetField.isContentEditable || targetField.contentEditable === 'true') {
+        // ContentEditable element
+        const currentText = targetField.textContent || '';
+        targetField.textContent = currentText + (currentText ? '\n\n' : '') + answer;
+
+        // Trigger input event
+        targetField.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        // Regular input/textarea
+        const currentValue = targetField.value || '';
+        targetField.value = currentValue + (currentValue ? '\n\n' : '') + answer;
+
+        // Trigger input and change events
+        targetField.dispatchEvent(new Event('input', { bubbles: true }));
+        targetField.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      // Update indicator to show success
+      textSelector.updateIndicatorSuccess();
+
+      console.log('[Solver] Answer appended to input field');
+    } catch (error) {
+      console.error('[Solver] Failed to solve with input context:', error);
+      textSelector.updateIndicatorError();
+    }
+  };
+
   // Listen for click on success indicator to show answer
   document.addEventListener('solver-show-answer', () => {
     if (currentAnswer) {

@@ -37,10 +37,19 @@ class TextSelector {
 
       // Check for X key with multiple conditions
       if (e.altKey && (e.key === 'x' || e.key === 'X' || e.code === 'KeyX' || e.keyCode === 88)) {
-        console.log('[Solver] Option+X detected, processing batch...');
-        e.preventDefault();
-        e.stopPropagation();
-        this.processBatch();
+        if (e.shiftKey) {
+          // Option+Shift+X: Process with input context
+          console.log('[Solver] Option+Shift+X detected, processing with input context...');
+          e.preventDefault();
+          e.stopPropagation();
+          this.processBatchWithInputContext(e.target);
+        } else {
+          // Option+X: Normal batch processing
+          console.log('[Solver] Option+X detected, processing batch...');
+          e.preventDefault();
+          e.stopPropagation();
+          this.processBatch();
+        }
       }
 
       // Check for Shift+S key to take screenshot
@@ -321,6 +330,76 @@ class TextSelector {
   }
 
   /**
+   * Process batch with input field context (triggered by Option+Shift+X in input field)
+   */
+  async processBatchWithInputContext(targetElement) {
+    // Check if target is an input field
+    const isInputField = targetElement && (
+      targetElement.tagName === 'INPUT' ||
+      targetElement.tagName === 'TEXTAREA' ||
+      targetElement.isContentEditable ||
+      targetElement.contentEditable === 'true'
+    );
+
+    if (!isInputField) {
+      this.showTemporaryMessage('Option+Shift+X must be used in an input field');
+      return;
+    }
+
+    // Check if there's anything collected
+    if (this.collectedQuestions.length === 0 && this.screenshots.length === 0) {
+      this.showTemporaryMessage('No content collected. Use Option+Shift+drag or Option+Shift+S first.');
+      return;
+    }
+
+    // Get current input content
+    let inputContent = '';
+    if (targetElement.isContentEditable || targetElement.contentEditable === 'true') {
+      inputContent = targetElement.textContent || '';
+    } else {
+      inputContent = targetElement.value || '';
+    }
+
+    console.log(`[Solver] Processing with input context. Input content length: ${inputContent.length}`);
+
+    // Combine collected questions
+    let combinedText = '';
+    if (this.collectedQuestions.length > 0) {
+      combinedText = this.collectedQuestions
+        .map((q, i) => `Question ${i + 1}:\n${q}`)
+        .join('\n\n---\n\n');
+      combinedText += '\n\n---\n\n';
+    }
+
+    // Add input context
+    if (inputContent.trim()) {
+      combinedText += `Current input content:\n${inputContent}\n\n`;
+    }
+
+    combinedText += 'Please continue or complete the response based on the above information.';
+
+    // Get references for later use
+    const questionCount = this.collectedQuestions.length;
+    const screenshots = [...this.screenshots];
+    const targetField = targetElement;
+
+    // Clear collected data
+    this.collectedQuestions = [];
+    this.screenshots = [];
+
+    // Hide all indicators
+    this.hideHintBadge();
+
+    // Show processing indicator
+    this.showFixedProcessingIndicator();
+
+    // Trigger solving with input context
+    if (this.onBatchProcessWithInput) {
+      this.onBatchProcessWithInput(combinedText, questionCount, screenshots, targetField, inputContent);
+    }
+  }
+
+  /**
    * Process all collected questions (triggered by Option+X)
    */
   processBatch() {
@@ -482,14 +561,14 @@ class TextSelector {
 
     document.body.appendChild(this.hintBadge);
 
-    // Auto-fade after 1 second
+    // Auto-fade after 3 seconds
     setTimeout(() => {
       if (this.hintBadge) {
         this.hintBadge.style.transition = 'opacity 0.3s';
         this.hintBadge.style.opacity = '0';
         setTimeout(() => this.hideHintBadge(), 300);
       }
-    }, 1000);
+    }, 3000);
   }
 
   /**
