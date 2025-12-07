@@ -35,7 +35,7 @@ function buildDocumentSchema(rawContent, llmResult, memoryReady) {
 }
 
 /**
- * Build chunk schemas
+ * Build chunk schemas with enhanced knowledge graph structure
  */
 function buildChunkSchemas(docId, chunks, rawContent, llmResult) {
   const createdAt = new Date().toISOString();
@@ -53,13 +53,28 @@ function buildChunkSchemas(docId, chunks, rawContent, llmResult) {
       text: chunk.text,
       embedding: null,
 
+      // Enhanced chunk classification
       block_type: chunk.blockType || 'paragraph',
+      chunk_type: chunk.chunkType || 'unknown', // concept, fact, procedure, example, definition, etc.
       importance: chunk.metadata.importance,
       created_at: createdAt,
 
+      // Knowledge graph: relationships to other chunks
+      relationships: {
+        related_chunks: [],        // IDs of semantically related chunks
+        parent_chunks: [],         // Chunks this one elaborates on
+        child_chunks: [],          // Chunks that elaborate on this one
+        contradicts: [],           // Chunks with conflicting information
+        supports: [],              // Chunks that support this one
+        prerequisite_of: [],       // This chunk is prerequisite for these chunks
+        requires: []               // Chunks needed to understand this one
+      },
+
+      // Source document reference
       source: {
         title: rawContent.metadata.title,
-        url: rawContent.metadata.url
+        url: rawContent.metadata.url,
+        doc_id: docId             // Explicit link back to source document
       },
 
       metadata: {
@@ -71,11 +86,17 @@ function buildChunkSchemas(docId, chunks, rawContent, llmResult) {
         word_count: wordCount,
         position: chunk.metadata.position,
         topic: chunk.topic || '',
-        key_entities: chunk.metadata.keyEntities || []
+        key_entities: chunk.metadata.keyEntities || [],
+
+        // Enhanced metadata for knowledge management
+        confidence_score: 1.0,    // How confident we are in this information
+        last_verified: createdAt, // When this chunk was last verified
+        update_count: 0,          // How many times this chunk was updated
+        access_count: 0           // How many times this chunk was retrieved
       }
     };
   });
 
-  console.log(`[AutoFeel Schema] Built ${chunkSchemas.length} chunk schemas`);
+  console.log(`[AutoFeel Schema] Built ${chunkSchemas.length} chunk schemas with knowledge graph structure`);
   return chunkSchemas;
 }

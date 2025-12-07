@@ -22,6 +22,10 @@ async function initializeManager() {
 }
 
 function setupEventListeners() {
+  // View switcher
+  document.getElementById('list-view-btn').addEventListener('click', () => switchView('list'));
+  document.getElementById('graph-view-btn').addEventListener('click', () => switchView('graph'));
+
   // Header actions
   document.getElementById('search-btn').addEventListener('click', performGlobalSearch);
   document.getElementById('global-search').addEventListener('keypress', (e) => {
@@ -618,3 +622,146 @@ function duplicateDocument() { showNotification('Duplicate document - coming soo
 function rechunkDocument() { showNotification('Re-chunk - requires background.js integration', 'info'); }
 function recleanDocument() { showNotification('Re-clean - requires background.js integration', 'info'); }
 function reanalyzeDocument() { showNotification('Re-analyze - requires background.js integration', 'info'); }
+
+// ==================== View Switcher ====================
+
+let currentView = 'list';
+let graphInitialized = false;
+
+function switchView(view) {
+  if (view === currentView) return;
+
+  currentView = view;
+
+  // Update button states
+  document.getElementById('list-view-btn').classList.toggle('active', view === 'list');
+  document.getElementById('graph-view-btn').classList.toggle('active', view === 'graph');
+
+  // Toggle views
+  document.getElementById('list-view').classList.toggle('hidden', view !== 'list');
+  document.getElementById('graph-view').classList.toggle('hidden', view !== 'graph');
+
+  // Initialize graph on first view
+  if (view === 'graph' && !graphInitialized) {
+    initializeGraphView();
+    graphInitialized = true;
+  }
+
+  // Refresh graph if switching to graph view
+  if (view === 'graph' && graphInitialized) {
+    // Trigger graph refresh
+    if (typeof loadAndRenderGraph === 'function') {
+      loadAndRenderGraph();
+    }
+  }
+}
+
+function initializeGraphView() {
+  console.log('[Manager] Initializing graph view...');
+
+  // Wait a tick for the view to be visible
+  setTimeout(() => {
+    const graphView = document.getElementById('graph-view');
+    const graphNetwork = document.getElementById('graph-network');
+
+    console.log('[Manager] Graph view visible:', !graphView.classList.contains('hidden'));
+    console.log('[Manager] Graph network element exists:', !!graphNetwork);
+
+    if (graphNetwork) {
+      console.log('[Manager] Graph network dimensions:', {
+        width: graphNetwork.offsetWidth,
+        height: graphNetwork.offsetHeight
+      });
+    }
+
+    // The graph initialization is handled by knowledge-graph.js
+    // Just trigger it if it hasn't been done yet
+    if (typeof loadAndRenderGraph === 'function') {
+      console.log('[Manager] Calling loadAndRenderGraph...');
+      loadAndRenderGraph();
+    } else {
+      console.error('[Manager] loadAndRenderGraph function not found!');
+    }
+
+    if (typeof loadDecisionLogs === 'function') {
+      loadDecisionLogs();
+    }
+  }, 100);
+}
+
+// ==================== Re-analyze Relationships ====================
+
+async function reanalyzeAllRelationships() {
+  console.log('[Manager] Starting relationship re-analysis...');
+
+  // Confirm with user
+  if (!confirm('This will use LLM to re-analyze ALL chunks and build cross-document relationships. This may take a while and use API tokens. Continue?')) {
+    return;
+  }
+
+  try {
+    // Show loading overlay
+    showLoading(true);
+
+    // Get LLM config from storage (stored in sync, not local!)
+    const config = await chrome.storage.sync.get([
+      'llmProvider',
+      'apiKey',
+      'apiEndpoint',
+      'modelName'
+    ]);
+
+    if (!config.apiKey) {
+      alert('Please configure your LLM API key in the popup first!');
+      showLoading(false);
+      return;
+    }
+
+    const llmConfig = {
+      llmProvider: config.llmProvider || 'openai',
+      apiKey: config.apiKey,
+      apiEndpoint: config.apiEndpoint || 'https://api.openai.com/v1/chat/completions',
+      modelName: config.modelName || 'gpt-4'
+    };
+
+    // Send message to background to trigger re-analysis
+    chrome.runtime.sendMessage({
+      action: 'reanalyzeRelationships',
+      llmConfig: llmConfig
+    }, (response) => {
+      showLoading(false);
+
+      if (response && response.success) {
+        alert(`✅ Re-analysis complete!\n\nChunks analyzed: ${response.chunksAnalyzed}\nDocuments processed: ${response.documentsProcessed}\nRelationships built: ${response.relationshipsBuilt}`);
+
+        // Reload the graph to show new relationships
+        if (typeof loadAndRenderGraph === 'function') {
+          loadAndRenderGraph();
+        }
+
+        // Reload logs
+        if (typeof loadDecisionLogs === 'function') {
+          loadDecisionLogs();
+        }
+      } else {
+        alert(`❌ Re-analysis failed: ${response?.error || 'Unknown error'}`);
+      }
+    });
+
+  } catch (error) {
+    console.error('[Manager] Re-analysis error:', error);
+    showLoading(false);
+    alert(`❌ Error: ${error.message}`);
+  }
+}
+
+function showLoading(show) {
+  const overlay = document.getElementById('loading-overlay');
+  if (overlay) {
+    if (show) {
+      overlay.classList.remove('hidden');
+    } else {
+      overlay.classList.add('hidden');
+    }
+  }
+}

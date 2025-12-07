@@ -6,6 +6,9 @@
   <title>AutoFeel Knowledge Manager</title>
   <link rel="stylesheet" href="styles/common.css">
   <link rel="stylesheet" href="styles/manager.css">
+  <link rel="stylesheet" href="styles/knowledge-graph.css">
+  <!-- vis.js for network graph visualization (local copy) -->
+  <script type="text/javascript" src="lib/vis-network.min.js"></script>
 </head>
 <body>
   <div class="manager-container">
@@ -21,14 +24,18 @@
         </div>
       </div>
       <div class="header-right">
+        <div class="view-switcher">
+          <button id="list-view-btn" class="view-btn active">📋 List</button>
+          <button id="graph-view-btn" class="view-btn">🕸️ Graph</button>
+        </div>
         <button id="new-doc-btn" class="btn-primary">+ New</button>
         <button id="sync-btn" class="btn-secondary">Sync</button>
         <button id="settings-btn" class="btn-icon">⚙️</button>
       </div>
     </header>
 
-    <!-- Main Content: 3-Column Layout -->
-    <div class="manager-main">
+    <!-- Main Content: 3-Column Layout (List View) -->
+    <div id="list-view" class="manager-main">
       <!-- Left Column: Document List -->
       <aside class="left-panel">
         <div class="panel-header">
@@ -266,6 +273,218 @@
         </div>
       </aside>
     </div>
+
+    <!-- Knowledge Graph View -->
+    <div id="graph-view" class="graph-view hidden">
+      <!-- Graph Controls -->
+      <div class="graph-controls">
+        <div class="control-group">
+          <span id="stats-summary" style="font-size: 14px; color: #7f8c8d; margin-right: 20px;">0 documents • 0 chunks • 0 relationships</span>
+        </div>
+
+        <div class="control-group">
+          <label>View Mode:</label>
+          <select id="view-mode">
+            <option value="all">All Nodes</option>
+            <option value="documents">Documents Only</option>
+            <option value="chunks">Chunks Only</option>
+            <option value="relationships">Relationship Network</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Relationship Filter:</label>
+          <div class="checkbox-group">
+            <label><input type="checkbox" class="rel-filter" value="related" checked> Related</label>
+            <label><input type="checkbox" class="rel-filter" value="elaborates" checked> Elaborates</label>
+            <label><input type="checkbox" class="rel-filter" value="contradicts" checked> Contradicts</label>
+            <label><input type="checkbox" class="rel-filter" value="supports" checked> Supports</label>
+            <label><input type="checkbox" class="rel-filter" value="prerequisite" checked> Prerequisite</label>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Layout:</label>
+          <select id="layout-algorithm">
+            <option value="force" selected>Force-Directed</option>
+            <option value="hierarchical">Hierarchical</option>
+            <option value="circular">Circular</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <label>Search:</label>
+          <input type="text" id="search-nodes" placeholder="Search nodes...">
+        </div>
+
+        <div class="control-group">
+          <button id="export-graph-btn" class="btn-primary">💾 Export Graph</button>
+          <button id="fit-view-btn" class="btn-secondary">🔍 Fit View</button>
+          <button id="reanalyze-relationships-btn" class="btn-secondary" style="background: #9b59b6;">🕸️ Re-analyze Relationships</button>
+        </div>
+      </div>
+
+      <!-- Graph Canvas and Details -->
+      <div class="graph-container-inner">
+        <div id="graph-network" class="graph-network"></div>
+
+        <!-- Node Details Sidebar -->
+        <aside id="node-details" class="node-details hidden">
+          <div class="details-header">
+            <h3 id="node-title">Node Details</h3>
+            <button id="close-details" class="btn-icon">✕</button>
+          </div>
+
+          <div class="details-content">
+            <!-- Document Node Details -->
+            <div id="doc-details" class="detail-section hidden">
+              <div class="detail-item">
+                <span class="label">Type:</span>
+                <span id="doc-type" class="value">Document</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">URL:</span>
+                <a id="doc-url" class="value link" target="_blank">-</a>
+              </div>
+              <div class="detail-item">
+                <span class="label">Created:</span>
+                <span id="doc-created" class="value">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Word Count:</span>
+                <span id="doc-words" class="value">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Chunks:</span>
+                <span id="doc-chunks" class="value">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Tags:</span>
+                <div id="doc-tags" class="tags-list"></div>
+              </div>
+              <div class="detail-item full">
+                <span class="label">Preview:</span>
+                <div id="doc-preview" class="text-preview"></div>
+              </div>
+            </div>
+
+            <!-- Chunk Node Details -->
+            <div id="chunk-details" class="detail-section hidden">
+              <div class="detail-item">
+                <span class="label">Type:</span>
+                <span id="chunk-type" class="value badge">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Importance:</span>
+                <div id="chunk-importance" class="importance-bar">
+                  <div class="importance-fill"></div>
+                </div>
+              </div>
+              <div class="detail-item">
+                <span class="label">Source Document:</span>
+                <span id="chunk-source" class="value link">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Word Count:</span>
+                <span id="chunk-words" class="value">-</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Confidence:</span>
+                <span id="chunk-confidence" class="value">-</span>
+              </div>
+              <div class="detail-item full">
+                <span class="label">Content:</span>
+                <div id="chunk-content" class="text-preview"></div>
+              </div>
+              <div class="detail-item full">
+                <span class="label">Relationships:</span>
+                <div id="chunk-relationships" class="relationships-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="details-actions">
+            <button id="focus-node-btn" class="btn-small">🎯 Focus</button>
+            <button id="expand-node-btn" class="btn-small">➕ Expand</button>
+            <button id="hide-node-btn" class="btn-small">👁️ Hide</button>
+          </div>
+        </aside>
+
+        <!-- Legend -->
+        <div class="graph-legend">
+          <h4>Legend</h4>
+          <div class="legend-items">
+            <div class="legend-item">
+              <div class="node-sample doc-node"></div>
+              <span>Document</span>
+            </div>
+            <div class="legend-item">
+              <div class="node-sample chunk-concept"></div>
+              <span>Concept</span>
+            </div>
+            <div class="legend-item">
+              <div class="node-sample chunk-fact"></div>
+              <span>Fact</span>
+            </div>
+            <div class="legend-item">
+              <div class="node-sample chunk-procedure"></div>
+              <span>Procedure</span>
+            </div>
+            <div class="legend-item">
+              <div class="edge-sample edge-related"></div>
+              <span>Related</span>
+            </div>
+            <div class="legend-item">
+              <div class="edge-sample edge-elaborates"></div>
+              <span>Elaborates</span>
+            </div>
+            <div class="legend-item">
+              <div class="edge-sample edge-contradicts"></div>
+              <span>Contradicts</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Loading Overlay for Graph -->
+        <div id="loading-overlay" class="loading-overlay hidden">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">Building knowledge graph...</div>
+        </div>
+      </div>
+
+      <!-- LLM Decision Log Panel -->
+      <div id="llm-log-panel" class="llm-log-panel collapsed">
+        <div class="log-header">
+          <div class="log-title">
+            <span class="log-icon">🤖</span>
+            <h3>LLM Decision Log</h3>
+            <span id="log-count" class="log-count">0 entries</span>
+          </div>
+          <div class="log-actions">
+            <button id="clear-log-btn" class="btn-icon" title="Clear log">🗑️</button>
+            <button id="export-log-btn" class="btn-icon" title="Export log">💾</button>
+            <button id="toggle-log-btn" class="btn-icon" title="Toggle log">▼</button>
+          </div>
+        </div>
+
+        <div class="log-content">
+          <div class="log-filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="decision">Decisions</button>
+            <button class="filter-btn" data-filter="chunk">Chunk Analysis</button>
+            <button class="filter-btn" data-filter="relationship">Relationships</button>
+            <button class="filter-btn" data-filter="error">Errors</button>
+          </div>
+
+          <div id="log-entries" class="log-entries">
+            <div class="log-placeholder">
+              <p>No LLM decisions logged yet.</p>
+              <p class="log-hint">Save a document with Option+C to see LLM decisions here.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Modals -->
@@ -283,5 +502,6 @@
   <script src="src/utils.js"></script>
   <script src="src/db.js"></script>
   <script src="src/manager.js"></script>
+  <script src="src/knowledge-graph.js"></script>
 </body>
 </html>

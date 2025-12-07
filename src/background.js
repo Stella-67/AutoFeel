@@ -118,6 +118,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     })();
     return true; // Keep message channel open for async response
   }
+
+  if (message.action === 'reanalyzeRelationships') {
+    // Handle re-analysis of all chunk relationships
+    (async () => {
+      try {
+        const memoryDB = new MemoryDB();
+        await memoryDB.init();
+
+        const decisionAgent = new DecisionAgent(memoryDB);
+
+        const result = await decisionAgent.reanalyzeAllChunks(
+          message.llmConfig,
+          (progress) => {
+            console.log(`[Background] Re-analysis progress: ${progress.current}/${progress.total}`);
+          }
+        );
+
+        sendResponse(result);
+      } catch (error) {
+        console.error('[Background] Re-analysis error:', error);
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      }
+    })();
+    return true; // Keep message channel open for async response
+  }
 });
 
 // ==================== Command Listeners ====================
@@ -260,12 +288,20 @@ async function handleSendToLLM() {
           // Create decision agent
           const decisionAgent = new DecisionAgent(memoryDB);
 
-          // Analyze what to do
-          const decision = await decisionAgent.decide(documentSchema, chunkSchemas);
-          console.log('[AutoFeel] Save decision:', decisionAgent.explainDecision(decision));
+          // Prepare LLM config for the agent
+          const llmConfig = {
+            llmProvider: config.llmProvider,
+            apiKey: config.apiKey,
+            apiEndpoint: config.apiEndpoint,
+            modelName: config.modelName
+          };
 
-          // Execute the decision
-          saveResult = await decisionAgent.execute(decision, documentSchema, chunkSchemas);
+          // Analyze what to do (LLM-powered decision)
+          const decision = await decisionAgent.decide(documentSchema, chunkSchemas, llmConfig);
+          console.log('[AutoFeel] 🤖 LLM Decision:', decisionAgent.explainDecision(decision));
+
+          // Execute the decision (with chunk-level analysis)
+          saveResult = await decisionAgent.execute(decision, documentSchema, chunkSchemas, llmConfig);
         } catch (dbError) {
           console.error('[AutoFeel Background] Failed to save to database:', dbError);
           saveResult = { success: false, error: dbError.message };
