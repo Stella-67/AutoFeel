@@ -43,7 +43,7 @@ class MemoryDB {
           // Indexes for searching
           documentsStore.createIndex('title', 'title', { unique: false });
           documentsStore.createIndex('url', 'url', { unique: false });
-          documentsStore.createIndex('created_at', 'created_at', { unique: false });
+          documentsStore.createIndex('captured_at', 'captured_at', { unique: false });
           documentsStore.createIndex('source_type', 'source_type', { unique: false });
 
           console.log('[AutoFeel DB] Created documents store');
