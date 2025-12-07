@@ -54,6 +54,27 @@ async function semanticSearch(queryText, config, topK) {
 
     console.log(`[MemoryRetrieval] Found ${searchResults.length} relevant chunks (semantic search)`);
 
+    // ==================== Card Architecture: Record Activation ====================
+    // Track that these chunks were retrieved (activation-based reinforcement)
+    try {
+      // ActivationTracker is loaded globally via importScripts in background.js
+      const activationTracker = new ActivationTracker(memoryDB);
+
+      const retrievedIds = searchResults.map(r => r.chunk_id);
+
+      // Record activation for each retrieved chunk
+      for (const chunkId of retrievedIds) {
+        // For each chunk, the others in the result set are co-activated
+        const coActivatedIds = retrievedIds.filter(id => id !== chunkId);
+        await activationTracker.recordActivation(chunkId, coActivatedIds);
+      }
+
+      console.log('[MemoryRetrieval] ✅ Recorded activation for retrieved chunks');
+    } catch (activationError) {
+      console.warn('[MemoryRetrieval] Failed to record activation:', activationError);
+      // Continue with retrieval even if activation tracking fails
+    }
+
     // Format results
     return formatSearchResults(searchResults);
   } catch (error) {
@@ -75,6 +96,27 @@ async function keywordSearch(queryText, topK) {
     }
 
     console.log(`[MemoryRetrieval] Found ${searchResults.length} relevant chunks (keyword search)`);
+
+    // ==================== Card Architecture: Record Activation ====================
+    // Track that these chunks were retrieved (activation-based reinforcement)
+    try {
+      // ActivationTracker is loaded globally via importScripts in background.js
+      const activationTracker = new ActivationTracker(memoryDB);
+
+      const retrievedIds = searchResults.map(r => r.chunk_id);
+
+      // Record activation for each retrieved chunk
+      for (const chunkId of retrievedIds) {
+        // For each chunk, the others in the result set are co-activated
+        const coActivatedIds = retrievedIds.filter(id => id !== chunkId);
+        await activationTracker.recordActivation(chunkId, coActivatedIds);
+      }
+
+      console.log('[MemoryRetrieval] ✅ Recorded activation for retrieved chunks');
+    } catch (activationError) {
+      console.warn('[MemoryRetrieval] Failed to record activation:', activationError);
+      // Continue with retrieval even if activation tracking fails
+    }
 
     // Format results
     return formatSearchResults(searchResults);

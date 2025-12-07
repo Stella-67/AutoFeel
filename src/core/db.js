@@ -1,7 +1,7 @@
 // db.js - IndexedDB Manager for Personal RAG Memory
 
 const DB_NAME = 'AutoFeelMemory';
-const DB_VERSION = 1;
+const DB_VERSION = 2;  // v2: Added card architecture fields (layer, confidence, surprise, activation, etc.)
 
 // Object Stores
 const DOCUMENTS_STORE = 'documents';
@@ -32,40 +32,119 @@ class MemoryDB {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        console.log('[AutoFeel DB] Upgrading database schema...');
+        const oldVersion = event.oldVersion;
+        const transaction = event.target.transaction;
 
-        // Create documents table
-        if (!db.objectStoreNames.contains(DOCUMENTS_STORE)) {
-          const documentsStore = db.createObjectStore(DOCUMENTS_STORE, {
-            keyPath: 'doc_id'
-          });
+        console.log(`[AutoFeel DB] Upgrading database from v${oldVersion} to v${DB_VERSION}...`);
 
-          // Indexes for searching
-          documentsStore.createIndex('title', 'title', { unique: false });
-          documentsStore.createIndex('url', 'url', { unique: false });
-          documentsStore.createIndex('captured_at', 'captured_at', { unique: false });
-          documentsStore.createIndex('source_type', 'source_type', { unique: false });
+        // ==================== Version 1: Initial Schema ====================
+        if (oldVersion < 1) {
+          // Create documents table
+          if (!db.objectStoreNames.contains(DOCUMENTS_STORE)) {
+            const documentsStore = db.createObjectStore(DOCUMENTS_STORE, {
+              keyPath: 'doc_id'
+            });
 
-          console.log('[AutoFeel DB] Created documents store');
+            // Indexes for searching
+            documentsStore.createIndex('title', 'title', { unique: false });
+            documentsStore.createIndex('url', 'url', { unique: false });
+            documentsStore.createIndex('captured_at', 'captured_at', { unique: false });
+            documentsStore.createIndex('source_type', 'source_type', { unique: false });
+
+            console.log('[AutoFeel DB] Created documents store');
+          }
+
+          // Create memory_chunks table (vector store)
+          if (!db.objectStoreNames.contains(CHUNKS_STORE)) {
+            const chunksStore = db.createObjectStore(CHUNKS_STORE, {
+              keyPath: 'chunk_id'
+            });
+
+            // Indexes for searching and retrieval
+            chunksStore.createIndex('doc_id', 'doc_id', { unique: false });
+            chunksStore.createIndex('order', 'order', { unique: false });
+            chunksStore.createIndex('created_at', 'created_at', { unique: false });
+            chunksStore.createIndex('importance', 'importance', { unique: false });
+            chunksStore.createIndex('block_type', 'block_type', { unique: false });
+
+            // Compound index for doc_id + order
+            chunksStore.createIndex('doc_order', ['doc_id', 'order'], { unique: false });
+
+            console.log('[AutoFeel DB] Created memory_chunks store');
+          }
         }
 
-        // Create memory_chunks table (vector store)
-        if (!db.objectStoreNames.contains(CHUNKS_STORE)) {
-          const chunksStore = db.createObjectStore(CHUNKS_STORE, {
-            keyPath: 'chunk_id'
-          });
+        // ==================== Version 2: Card Architecture ====================
+        if (oldVersion < 2) {
+          const chunksStore = transaction.objectStore(CHUNKS_STORE);
 
-          // Indexes for searching and retrieval
-          chunksStore.createIndex('doc_id', 'doc_id', { unique: false });
-          chunksStore.createIndex('order', 'order', { unique: false });
-          chunksStore.createIndex('created_at', 'created_at', { unique: false });
-          chunksStore.createIndex('importance', 'importance', { unique: false });
-          chunksStore.createIndex('block_type', 'block_type', { unique: false });
+          // Add new indexes for card architecture
+          if (!chunksStore.indexNames.contains('layer')) {
+            chunksStore.createIndex('layer', 'layer', { unique: false });
+            console.log('[AutoFeel DB] Added index: layer');
+          }
 
-          // Compound index for doc_id + order
-          chunksStore.createIndex('doc_order', ['doc_id', 'order'], { unique: false });
+          if (!chunksStore.indexNames.contains('confidence')) {
+            chunksStore.createIndex('confidence', 'confidence', { unique: false });
+            console.log('[AutoFeel DB] Added index: confidence');
+          }
 
-          console.log('[AutoFeel DB] Created memory_chunks store');
+          if (!chunksStore.indexNames.contains('activation_weight')) {
+            chunksStore.createIndex('activation_weight', 'activation_weight', { unique: false });
+            console.log('[AutoFeel DB] Added index: activation_weight');
+          }
+
+          if (!chunksStore.indexNames.contains('stability_score')) {
+            chunksStore.createIndex('stability_score', 'stability_score', { unique: false });
+            console.log('[AutoFeel DB] Added index: stability_score');
+          }
+
+          if (!chunksStore.indexNames.contains('obsolete')) {
+            chunksStore.createIndex('obsolete', 'obsolete', { unique: false });
+            console.log('[AutoFeel DB] Added index: obsolete');
+          }
+
+          console.log('[AutoFeel DB] ✅ Migrated to v2: Added card architecture indexes');
+
+          // Migrate existing data: add default values
+          const cursorRequest = chunksStore.openCursor();
+          let migratedCount = 0;
+
+          cursorRequest.onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+              const chunk = cursor.value;
+
+              // Add default values for new fields if they don't exist
+              if (chunk.layer === undefined) {
+                chunk.layer = 'stable';  // Existing chunks are considered stable
+                chunk.confidence = 0.8;  // High confidence for existing data
+                chunk.surprise = 0.1;    // Low surprise (already integrated)
+                chunk.activation_count = 0;
+                chunk.activation_weight = 0.5;  // Medium activation
+                chunk.last_activated = chunk.created_at;
+                chunk.stability_score = 0.8;
+                chunk.migration_ready = false;
+                chunk.version = 1;
+                chunk.parent_card_id = null;
+                chunk.merged_from = [];
+                chunk.decay_factor = 1.0;
+                chunk.obsolete = false;
+                chunk.last_updated = chunk.created_at;
+
+                cursor.update(chunk);
+                migratedCount++;
+              }
+
+              cursor.continue();
+            } else {
+              console.log(`[AutoFeel DB] ✅ Migrated ${migratedCount} existing chunks to v2 schema`);
+            }
+          };
+
+          cursorRequest.onerror = () => {
+            console.error('[AutoFeel DB] ❌ Error migrating existing chunks:', cursorRequest.error);
+          };
         }
       };
     });

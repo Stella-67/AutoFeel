@@ -805,6 +805,29 @@ Analyze these chunks and decide how to update the knowledge base.`;
         };
       }
 
+      // ⚠️ BACKUP: Save original relationships before clearing
+      console.log('[Decision Agent] 💾 Backing up existing relationships...');
+      const originalRelationships = new Map();
+      let existingRelationshipCount = 0;
+
+      for (const chunk of allChunks) {
+        originalRelationships.set(chunk.chunk_id, JSON.parse(JSON.stringify(chunk.relationships)));
+
+        // Count existing relationships
+        if (chunk.relationships) {
+          existingRelationshipCount +=
+            (chunk.relationships.related_chunks?.length || 0) +
+            (chunk.relationships.parent_chunks?.length || 0) +
+            (chunk.relationships.child_chunks?.length || 0) +
+            (chunk.relationships.contradicts?.length || 0) +
+            (chunk.relationships.supports?.length || 0) +
+            (chunk.relationships.prerequisite_of?.length || 0) +
+            (chunk.relationships.requires?.length || 0);
+        }
+      }
+
+      console.log(`[Decision Agent] 📊 Found ${existingRelationshipCount} existing relationships to backup`);
+
       // ✅ Clear all existing relationships before re-analysis
       console.log('[Decision Agent] 🧹 Clearing existing relationships...');
       for (const chunk of allChunks) {
@@ -846,6 +869,46 @@ Analyze these chunks and decide how to update the knowledge base.`;
         totalRelationships += relationships.length;
 
         console.log(`[Decision Agent] 🕸️ Batch ${Math.floor(i / BATCH_SIZE) + 1}: Found ${relationships.length} relationships`);
+      }
+
+      // ⚠️ SAFETY CHECK: If no relationships were found, restore the backup
+      if (totalRelationships === 0 && existingRelationshipCount > 0) {
+        console.warn('[Decision Agent] ⚠️ WARNING: Re-analysis found 0 relationships!');
+        console.warn('[Decision Agent] ⚠️ Restoring original relationships to prevent data loss...');
+
+        // Restore original relationships
+        for (const chunk of allChunks) {
+          const backup = originalRelationships.get(chunk.chunk_id);
+          if (backup) {
+            chunk.relationships = backup;
+          }
+        }
+
+        console.log('[Decision Agent] ✅ Original relationships restored');
+
+        // Log the failed re-analysis
+        await this.logDecision({
+          type: 'error',
+          stage: 'reanalysis',
+          title: 'Re-analysis failed - no relationships found',
+          content: `Re-analysis found 0 relationships. Original ${existingRelationshipCount} relationships were preserved.`,
+          metadata: {
+            totalChunks: allChunks.length,
+            totalDocuments: allDocuments.length,
+            originalRelationships: existingRelationshipCount,
+            newRelationships: 0,
+            action: 'restored_backup'
+          }
+        });
+
+        return {
+          success: false,
+          error: 'Re-analysis found 0 relationships. Original relationships were preserved. Check LLM configuration or lower the similarity threshold.',
+          chunksAnalyzed: allChunks.length,
+          documentsProcessed: allDocuments.length,
+          relationshipsBuilt: 0,
+          relationshipsRestored: existingRelationshipCount
+        };
       }
 
       // Save all updated chunks
@@ -892,8 +955,8 @@ Analyze these chunks and decide how to update the knowledge base.`;
     const { llmProvider, apiKey, apiEndpoint, modelName } = llmConfig;
 
     // For each batch chunk, find top 5 most similar chunks using algorithm
-    const SIMILARITY_THRESHOLD = 0.15; // Minimum similarity to consider (lowered from 0.3)
-    const TOP_N_SIMILAR = 8; // Number of similar chunks to send to LLM (increased from 5)
+    const SIMILARITY_THRESHOLD = 0.05; // Minimum similarity to consider (lowered to allow more candidates)
+    const TOP_N_SIMILAR = 10; // Number of similar chunks to send to LLM (increased to find more relationships)
 
     const candidateChunks = new Map(); // chunk_id -> chunk
 
@@ -922,10 +985,14 @@ Analyze these chunks and decide how to update the knowledge base.`;
       similarities.sort((a, b) => b.similarity - a.similarity);
       const topSimilar = similarities.slice(0, TOP_N_SIMILAR);
 
-      // Add to candidate chunks (but exclude chunks already in batch to avoid duplicates!)
+      // Add to candidate chunks
+      // IMPORTANT: Exclude chunks that are already in the current batch
+      // to avoid false "self-loop" detection when the same chunk appears
+      // in both batchChunks and otherChunks with different indices
       for (const { chunk } of topSimilar) {
-        // Don't add if this chunk is already in the current batch
-        if (!batchChunks.find(b => b.chunk_id === chunk.chunk_id)) {
+        // Skip if this chunk is already in the batch
+        const isInBatch = batchChunks.some(b => b.chunk_id === chunk.chunk_id);
+        if (!isInBatch) {
           candidateChunks.set(chunk.chunk_id, chunk);
         }
       }
@@ -937,9 +1004,30 @@ Analyze these chunks and decide how to update the knowledge base.`;
     console.log(`[Decision Agent] 📊 Pre-filtered: ${otherChunks.length} candidate chunks from ${allChunks.length} total`);
     console.log(`[Decision Agent] 📊 Batch size: ${batchChunks.length}, Candidates: ${otherChunks.length}`);
 
-    // If no candidates found, return empty relationships
-    if (otherChunks.length === 0) {
-      console.warn('[Decision Agent] ⚠️ No candidate chunks found after similarity filtering. Try lowering SIMILARITY_THRESHOLD.');
+    // Special case: If no external candidates found, we can still analyze intra-batch relationships
+    if (otherChunks.length === 0 && batchChunks.length > 1) {
+      console.warn('[Decision Agent] ⚠️ No external candidate chunks found after filtering.');
+      console.warn('[Decision Agent] 💡 Will analyze relationships within the batch itself.');
+    }
+
+    // If batch is too small (only 1 chunk) and no candidates, return empty
+    if (otherChunks.length === 0 && batchChunks.length <= 1) {
+      console.warn('[Decision Agent] ⚠️ Cannot analyze: only 1 chunk in batch and no external candidates.');
+      console.warn(`[Decision Agent] ⚠️ Current SIMILARITY_THRESHOLD = ${SIMILARITY_THRESHOLD}`);
+      console.warn('[Decision Agent] ⚠️ Try lowering SIMILARITY_THRESHOLD in decision-agent.js line 958');
+
+      // Debug: Show max similarity found
+      let maxSim = 0;
+      for (const chunk1 of batchChunks) {
+        for (const chunk2 of allChunks) {
+          if (chunk1.chunk_id === chunk2.chunk_id) continue;
+          const sim = this.memoryDB.calculateTextSimilarity(chunk1.text || '', chunk2.text || '');
+          if (sim > maxSim) maxSim = sim;
+        }
+      }
+      console.warn(`[Decision Agent] 📊 Max similarity found in this batch: ${maxSim.toFixed(3)}`);
+      console.warn(`[Decision Agent] 💡 Suggestion: Set SIMILARITY_THRESHOLD to ${Math.max(0.01, maxSim * 0.7).toFixed(2)} or lower`);
+
       return [];
     }
 
@@ -948,9 +1036,11 @@ Analyze these chunks and decide how to update the knowledge base.`;
       `B${i}: [${c.chunk_type || 'unknown'}] ${c.text.substring(0, 120)}...`
     ).join('\n');
 
-    const otherSummaries = otherChunks.map((c, i) =>
-      `O${i}: [${c.chunk_type || 'unknown'}] ${c.text.substring(0, 120)}...`
-    ).join('\n');
+    const otherSummaries = otherChunks.length > 0
+      ? otherChunks.map((c, i) =>
+          `O${i}: [${c.chunk_type || 'unknown'}] ${c.text.substring(0, 120)}...`
+        ).join('\n')
+      : '(No external candidates - analyze relationships within batch chunks only)';
 
     const systemPrompt = `You are a knowledge graph relationship analyzer. Find semantic relationships between chunks.
 
@@ -1037,13 +1127,28 @@ Find meaningful relationships between these chunks.`;
           toChunk = otherChunks[parseInt(rel.to.substring(1))];
         }
 
+        // Debug: Log if chunk lookup failed
+        if (!fromChunk) {
+          console.warn(`[Decision Agent] ⚠️ Failed to find fromChunk for ID: ${rel.from} (batch size: ${batchChunks.length}, candidates: ${otherChunks.length})`);
+        }
+        if (!toChunk) {
+          console.warn(`[Decision Agent] ⚠️ Failed to find toChunk for ID: ${rel.to} (batch size: ${batchChunks.length}, candidates: ${otherChunks.length})`);
+        }
+
         return {
           from: fromChunk?.chunk_id,
           to: toChunk?.chunk_id,
           type: rel.type,
-          strength: rel.strength || 0.5
+          strength: rel.strength || 0.5,
+          _debug: { fromId: rel.from, toId: rel.to } // For debugging
         };
-      }).filter(r => r.from && r.to && r.from !== r.to); // ✅ Exclude self-loops!
+      }).filter(r => {
+        const valid = r.from && r.to && r.from !== r.to;
+        if (!valid) {
+          console.warn(`[Decision Agent] ⚠️ Filtered out relationship: ${r._debug.fromId} -> ${r._debug.toId} (from: ${r.from ? 'OK' : 'MISSING'}, to: ${r.to ? 'OK' : 'MISSING'}, self-loop: ${r.from === r.to})`);
+        }
+        return valid;
+      }); // ✅ Exclude self-loops and invalid references!
 
       // Apply chunk type classifications
       if (analysis.chunkTypes) {

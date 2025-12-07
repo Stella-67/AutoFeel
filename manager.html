@@ -292,6 +292,17 @@
           </select>
         </div>
 
+        <!-- ==================== Card Architecture: Layer Filter ==================== -->
+        <div class="control-group">
+          <label>Layer Filter:</label>
+          <select id="layer-filter">
+            <option value="all">All Layers</option>
+            <option value="temporary">Temporary Only</option>
+            <option value="stable">Stable Only</option>
+          </select>
+        </div>
+        <!-- =================================================================== -->
+
         <div class="control-group">
           <label>Relationship Filter:</label>
           <div class="checkbox-group">
@@ -374,12 +385,48 @@
                 <span class="label">Type:</span>
                 <span id="chunk-type" class="value badge">-</span>
               </div>
+
+              <!-- ==================== Card Architecture Fields ==================== -->
+              <div class="detail-item">
+                <span class="label">Layer:</span>
+                <span id="chunk-layer" class="value badge">-</span>
+              </div>
+
+              <div class="detail-item">
+                <span class="label">Confidence:</span>
+                <div class="progress-bar">
+                  <div class="confidence-fill"></div>
+                </div>
+                <span id="chunk-confidence" class="value">-</span>
+              </div>
+
+              <div class="detail-item">
+                <span class="label">Surprise:</span>
+                <div class="progress-bar">
+                  <div class="surprise-fill"></div>
+                </div>
+              </div>
+
               <div class="detail-item">
                 <span class="label">Importance:</span>
                 <div id="chunk-importance" class="importance-bar">
                   <div class="importance-fill"></div>
                 </div>
               </div>
+
+              <div class="detail-item">
+                <span class="label">Activations:</span>
+                <span id="chunk-activation-count" class="value">-</span>
+                <span class="label" style="margin-left: 10px;">Weight:</span>
+                <span id="chunk-activation-weight" class="value">-</span>
+              </div>
+
+              <div class="detail-item">
+                <span class="label">Stability:</span>
+                <span id="chunk-stability" class="value">-</span>
+              </div>
+              <!-- ================================================================= -->
+
               <div class="detail-item">
                 <span class="label">Source Document:</span>
                 <span id="chunk-source" class="value link">-</span>
@@ -387,10 +434,6 @@
               <div class="detail-item">
                 <span class="label">Word Count:</span>
                 <span id="chunk-words" class="value">-</span>
-              </div>
-              <div class="detail-item">
-                <span class="label">Confidence:</span>
-                <span id="chunk-confidence" class="value">-</span>
               </div>
               <div class="detail-item full">
                 <span class="label">Content:</span>
@@ -414,34 +457,55 @@
         <div class="graph-legend">
           <h4>Legend</h4>
           <div class="legend-items">
-            <div class="legend-item">
-              <div class="node-sample doc-node"></div>
-              <span>Document</span>
+            <!-- ==================== Card Architecture: Layer Colors ==================== -->
+            <div class="legend-section">
+              <div class="legend-subtitle">Layers</div>
+              <div class="legend-item">
+                <div class="node-sample" style="background: rgba(255, 193, 7, 0.8); border: 2px solid #F57C00; border-radius: 50%; width: 12px; height: 12px;"></div>
+                <span>Temporary</span>
+              </div>
+              <div class="legend-item">
+                <div class="node-sample" style="background: rgba(76, 175, 80, 0.8); border: 2px solid #388E3C; border-radius: 50%; width: 12px; height: 12px;"></div>
+                <span>Stable</span>
+              </div>
             </div>
-            <div class="legend-item">
-              <div class="node-sample chunk-concept"></div>
-              <span>Concept</span>
+
+            <div class="legend-section">
+              <div class="legend-subtitle">Node Types</div>
+              <div class="legend-item">
+                <div class="node-sample doc-node"></div>
+                <span>Document</span>
+              </div>
+              <div class="legend-item">
+                <div class="node-sample chunk-concept"></div>
+                <span>Concept</span>
+              </div>
+              <div class="legend-item">
+                <div class="node-sample chunk-fact"></div>
+                <span>Fact</span>
+              </div>
+              <div class="legend-item">
+                <div class="node-sample chunk-procedure"></div>
+                <span>Procedure</span>
+              </div>
             </div>
-            <div class="legend-item">
-              <div class="node-sample chunk-fact"></div>
-              <span>Fact</span>
+
+            <div class="legend-section">
+              <div class="legend-subtitle">Relationships</div>
+              <div class="legend-item">
+                <div class="edge-sample edge-related"></div>
+                <span>Related</span>
+              </div>
+              <div class="legend-item">
+                <div class="edge-sample edge-elaborates"></div>
+                <span>Elaborates</span>
+              </div>
+              <div class="legend-item">
+                <div class="edge-sample edge-contradicts"></div>
+                <span>Contradicts</span>
+              </div>
             </div>
-            <div class="legend-item">
-              <div class="node-sample chunk-procedure"></div>
-              <span>Procedure</span>
-            </div>
-            <div class="legend-item">
-              <div class="edge-sample edge-related"></div>
-              <span>Related</span>
-            </div>
-            <div class="legend-item">
-              <div class="edge-sample edge-elaborates"></div>
-              <span>Elaborates</span>
-            </div>
-            <div class="legend-item">
-              <div class="edge-sample edge-contradicts"></div>
-              <span>Contradicts</span>
-            </div>
+            <!-- =================================================================== -->
           </div>
         </div>
 

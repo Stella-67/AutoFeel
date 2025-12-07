@@ -160,6 +160,11 @@ IndexedDB 数据库名称: AutoFeelMemory
 | `importance` | importance | 非唯一 | 按重要性筛选 |
 | `block_type` | block_type | 非唯一 | 按类型筛选 |
 | `doc_order` | [doc_id, order] | 非唯一 | 复合索引，快速获取文档的有序 chunks |
+| **`layer`** | **layer** | **非唯一** | **按层级筛选（temporary/stable）** |
+| **`confidence`** | **confidence** | **非唯一** | **按置信度筛选** |
+| **`activation_weight`** | **activation_weight** | **非唯一** | **按激活权重排序** |
+| **`stability_score`** | **stability_score** | **非唯一** | **按稳定性筛选** |
+| **`obsolete`** | **obsolete** | **非唯一** | **过滤过时的 chunks** |
 
 ---
 
@@ -204,6 +209,62 @@ IndexedDB 数据库名称: AutoFeelMemory
   // 用途: 优先级排序、筛选
 
   "created_at": "2024-01-15T08:30:45.123Z",           // 创建时间
+
+  // ==================== 卡片架构 (v2): 多层自演化系统 ====================
+
+  // 分层系统
+  "layer": "temporary",                                // 所属层级
+  // 可能值: "temporary"（临时层，高可塑性）, "stable"（稳定层，长期记忆）
+  // 新 chunks 默认在 temporary 层，经过验证后迁移到 stable 层
+
+  // 置信度与惊奇度
+  "confidence": 0.75,                                  // 置信度 (0-1)
+  // 0.0 = 低置信度（需要验证）, 1.0 = 高置信度（经过验证）
+  // 影响因素: 来源可靠性、一致性、完整性、支持证据数量
+
+  "surprise": 0.3,                                     // 惊奇度 (0-1)
+  // 0.0 = 不惊奇（与现有知识一致）, 1.0 = 非常惊奇（新颖或矛盾）
+  // 计算: 语义距离 + 矛盾检测 + 新颖性
+
+  // 激活强化
+  "activation_count": 5,                               // 激活次数
+  // 记录该 chunk 被检索或使用的次数
+
+  "activation_weight": 0.8,                            // 激活权重 (0-1)
+  // 随使用频率增加，随时间衰减
+  // 用于排序和遗忘机制
+
+  "last_activated": "2024-01-20T10:15:30.123Z",       // 最后激活时间
+
+  // 稳定性与迁移
+  "stability_score": 0.6,                              // 稳定性得分 (0-1)
+  // 综合计算: confidence + (1 - surprise) + activation_weight
+  // > 0.7 时可以迁移到 stable 层
+
+  "migration_ready": false,                            // 是否准备迁移
+  // true = 满足迁移条件（高置信、低惊奇、高激活）
+
+  // 生命周期与演化
+  "version": 1,                                        // 版本号
+  // 每次更新（合并、分裂、修改）时递增
+
+  "parent_card_id": null,                              // 父卡片 ID
+  // 如果是从另一个 chunk 分裂而来，记录父 chunk_id
+
+  "merged_from": [],                                   // 合并源
+  // 如果是从多个 chunks 合并而来，记录源 chunk_ids
+  // 类型: Array<String>
+
+  // 遗忘与修剪
+  "decay_factor": 1.0,                                 // 衰减因子 (0-1)
+  // 随时间和不使用而衰减
+  // 半衰期: 30 天
+
+  "obsolete": false,                                   // 是否过时
+  // true = 标记为过时，可能被修剪
+  // 条件: decay_factor < 0.1 且 activation_count < 2
+
+  "last_updated": "2024-01-15T08:30:45.123Z",         // 最后更新时间
 
   // ==================== 知识图谱: 关系网络 ====================
   "relationships": {

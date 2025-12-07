@@ -41,6 +41,15 @@ function setupGraphControlListeners() {
     applyViewMode(e.target.value);
   });
 
+  // ==================== Card Architecture: Layer Filter ====================
+  const layerFilter = document.getElementById('layer-filter');
+  if (layerFilter) {
+    layerFilter.addEventListener('change', (e) => {
+      applyLayerFilter(e.target.value);
+    });
+  }
+  // =================================================================
+
   document.getElementById('layout-algorithm').addEventListener('change', (e) => {
     applyLayout(e.target.value);
   });
@@ -241,20 +250,28 @@ function buildGraphData(documents, chunks) {
   // Add chunk nodes
   chunks.forEach(chunk => {
     const chunkType = chunk.chunk_type || 'unknown';
-    const color = getChunkColor(chunkType);
+    const layer = chunk.layer || 'stable'; // Default to stable for old data
+    const activationWeight = chunk.activation_weight || 0;
+
+    // ==================== Card Architecture: Node Styling ====================
+    // Color based on layer (temporary vs stable)
+    const color = getLayerColor(layer, chunk);
 
     nodes.push({
       id: chunk.chunk_id,
       label: truncate(chunk.text, 40),
-      title: `${chunkType}: ${chunk.text.substring(0, 100)}...`,
-      group: `chunk-${chunkType}`,
+      title: `${layer.toUpperCase()} | ${chunkType}: ${chunk.text.substring(0, 100)}...`,
+      group: `chunk-${layer}`,
       shape: 'ellipse',
       color: color,
       font: {
         size: 12,
         face: 'arial'
       },
-      size: 15 + (chunk.importance || 0.5) * 10, // Size based on importance
+      // Size based on activation_weight (how frequently used)
+      size: 15 + activationWeight * 20,
+      borderWidth: 2,
+      borderWidthSelected: 4,
       data: chunk // Store full chunk data
     });
 
@@ -280,67 +297,94 @@ function buildGraphData(documents, chunks) {
 
     const relationships = chunk.relationships;
 
+    // Helper function to extract target ID and strength from relationship
+    const getRelationshipData = (rel) => {
+      if (typeof rel === 'string') {
+        return { targetId: rel, strength: 0.5 }; // Old format
+      } else if (typeof rel === 'object' && rel.target_id) {
+        return { targetId: rel.target_id, strength: rel.strength || 0.5 }; // New format
+      }
+      return null;
+    };
+
+    // ==================== Card Architecture: Edge Width Based on Strength ====================
+
     // Related chunks
-    (relationships.related_chunks || []).forEach(targetId => {
+    (relationships.related_chunks || []).forEach(rel => {
+      const data = getRelationshipData(rel);
+      if (!data) return;
+
       edges.push({
         from: chunk.chunk_id,
-        to: targetId,
+        to: data.targetId,
         label: 'related',
         color: { color: '#95a5a6' },
-        width: 2,
+        width: 1 + data.strength * 4, // Width based on relationship strength
         type: 'related'
       });
     });
 
     // Elaborates (parent-child)
-    (relationships.child_chunks || []).forEach(targetId => {
+    (relationships.child_chunks || []).forEach(rel => {
+      const data = getRelationshipData(rel);
+      if (!data) return;
+
       edges.push({
         from: chunk.chunk_id,
-        to: targetId,
+        to: data.targetId,
         label: 'elaborates',
         arrows: { to: { enabled: true } },
         color: { color: '#3498db' },
-        width: 2,
+        width: 1 + data.strength * 4,
         type: 'elaborates'
       });
     });
 
     // Contradicts
-    (relationships.contradicts || []).forEach(targetId => {
+    (relationships.contradicts || []).forEach(rel => {
+      const data = getRelationshipData(rel);
+      if (!data) return;
+
       edges.push({
         from: chunk.chunk_id,
-        to: targetId,
+        to: data.targetId,
         label: 'contradicts',
         arrows: { to: { enabled: true } },
         color: { color: '#e74c3c' },
-        width: 2,
+        width: 1 + data.strength * 4,
         dashes: [5, 5],
         type: 'contradicts'
       });
     });
 
     // Supports
-    (relationships.supports || []).forEach(targetId => {
+    (relationships.supports || []).forEach(rel => {
+      const data = getRelationshipData(rel);
+      if (!data) return;
+
       edges.push({
         from: chunk.chunk_id,
-        to: targetId,
+        to: data.targetId,
         label: 'supports',
         arrows: { to: { enabled: true } },
         color: { color: '#2ecc71' },
-        width: 2,
+        width: 1 + data.strength * 4,
         type: 'supports'
       });
     });
 
     // Prerequisite
-    (relationships.prerequisite_of || []).forEach(targetId => {
+    (relationships.prerequisite_of || []).forEach(rel => {
+      const data = getRelationshipData(rel);
+      if (!data) return;
+
       edges.push({
         from: chunk.chunk_id,
-        to: targetId,
+        to: data.targetId,
         label: 'prerequisite',
         arrows: { to: { enabled: true } },
         color: { color: '#f1c40f' },
-        width: 2,
+        width: 1 + data.strength * 4,
         type: 'prerequisite'
       });
     });
@@ -515,13 +559,67 @@ function showChunkDetails(chunk) {
   typeEl.textContent = chunkType;
   typeEl.style.background = getChunkColor(chunkType).background;
 
-  // Importance bar
+  // ==================== Card Architecture: Display Card Metrics ====================
+  const layer = chunk.layer || 'stable';
+  const confidence = chunk.confidence !== undefined ? chunk.confidence : (chunk.metadata?.confidence_score || 1.0);
+  const surprise = chunk.surprise !== undefined ? chunk.surprise : 0.5;
+  const activationCount = chunk.activation_count || 0;
+  const activationWeight = chunk.activation_weight || 0;
+  const stabilityScore = chunk.stability_score !== undefined ? chunk.stability_score : 0.8;
+
+  // Layer display
+  const layerEl = document.getElementById('chunk-layer');
+  if (layerEl) {
+    layerEl.textContent = layer.toUpperCase();
+    layerEl.style.background = layer === 'temporary' ? '#FFC107' : '#4CAF50';
+    layerEl.style.color = '#fff';
+    layerEl.style.padding = '2px 8px';
+    layerEl.style.borderRadius = '3px';
+    layerEl.style.fontSize = '11px';
+    layerEl.style.fontWeight = 'bold';
+  }
+
+  // Importance bar (keep for backward compatibility)
   const importance = chunk.importance || 0.5;
-  document.querySelector('.importance-fill').style.width = (importance * 100) + '%';
+  const importanceFill = document.querySelector('.importance-fill');
+  if (importanceFill) {
+    importanceFill.style.width = (importance * 100) + '%';
+  }
+
+  // Confidence bar
+  const confidenceFill = document.querySelector('.confidence-fill');
+  if (confidenceFill) {
+    confidenceFill.style.width = (confidence * 100) + '%';
+    confidenceFill.style.background = confidence > 0.7 ? '#2ecc71' : (confidence > 0.4 ? '#f39c12' : '#e74c3c');
+  }
+
+  // Surprise bar
+  const surpriseFill = document.querySelector('.surprise-fill');
+  if (surpriseFill) {
+    surpriseFill.style.width = (surprise * 100) + '%';
+    surpriseFill.style.background = surprise > 0.7 ? '#e74c3c' : (surprise > 0.4 ? '#f39c12' : '#2ecc71');
+  }
+
+  // Activation display
+  const activationCountEl = document.getElementById('chunk-activation-count');
+  if (activationCountEl) {
+    activationCountEl.textContent = activationCount;
+  }
+
+  const activationWeightEl = document.getElementById('chunk-activation-weight');
+  if (activationWeightEl) {
+    activationWeightEl.textContent = activationWeight.toFixed(2);
+  }
+
+  // Stability display
+  const stabilityEl = document.getElementById('chunk-stability');
+  if (stabilityEl) {
+    stabilityEl.textContent = stabilityScore.toFixed(2);
+  }
 
   document.getElementById('chunk-source').textContent = chunk.source?.title || 'Unknown';
   document.getElementById('chunk-words').textContent = chunk.metadata?.word_count || 0;
-  document.getElementById('chunk-confidence').textContent = (chunk.metadata?.confidence_score || 1.0).toFixed(2);
+  document.getElementById('chunk-confidence').textContent = confidence.toFixed(2);
   document.getElementById('chunk-content').textContent = chunk.text;
 
   // Relationships
@@ -616,6 +714,53 @@ function applyViewMode(mode) {
   if (network) {
     network.fit();
   }
+}
+
+/**
+ * Filter nodes by card layer (temporary vs stable)
+ * @param {string} layer - 'all', 'temporary', or 'stable'
+ */
+function applyLayerFilter(layer) {
+  if (!nodesDataset) return;
+
+  const allNodes = nodesDataset.get();
+
+  allNodes.forEach(node => {
+    // Always show documents
+    if (node.group === 'document') {
+      nodesDataset.update({
+        id: node.id,
+        hidden: false
+      });
+      return;
+    }
+
+    // Filter chunks by layer
+    const nodeLayer = node.data?.layer || 'stable';
+
+    if (layer === 'all') {
+      nodesDataset.update({
+        id: node.id,
+        hidden: false
+      });
+    } else if (layer === 'temporary') {
+      nodesDataset.update({
+        id: node.id,
+        hidden: nodeLayer !== 'temporary'
+      });
+    } else if (layer === 'stable') {
+      nodesDataset.update({
+        id: node.id,
+        hidden: nodeLayer !== 'stable'
+      });
+    }
+  });
+
+  if (network) {
+    network.fit();
+  }
+
+  console.log(`[Knowledge Graph] Applied layer filter: ${layer}`);
 }
 
 function applyLayout(algorithm) {
@@ -818,6 +963,43 @@ function getChunkColor(type) {
     unknown: { background: '#95a5a6', border: '#7f8c8d' }
   };
   return colors[type] || colors.unknown;
+}
+
+/**
+ * Get node color based on card layer and confidence
+ * @param {string} layer - 'temporary' or 'stable'
+ * @param {Object} chunk - Chunk data (optional, for confidence-based shading)
+ * @returns {Object} Color object with background and border
+ */
+function getLayerColor(layer, chunk = null) {
+  // Base colors for layers
+  if (layer === 'temporary') {
+    // Temporary layer: Yellow/Orange (high plasticity)
+    const confidence = chunk?.confidence || 0.5;
+    const opacity = 0.6 + (confidence * 0.4); // Higher confidence = more opaque
+
+    return {
+      background: `rgba(255, 193, 7, ${opacity})`, // #FFC107 with varying opacity
+      border: '#F57C00',
+      highlight: {
+        background: '#FFB300',
+        border: '#E65100'
+      }
+    };
+  } else {
+    // Stable layer: Green (long-term memory)
+    const activationWeight = chunk?.activation_weight || 0;
+    const intensity = 0.6 + (activationWeight * 0.4); // Higher activation = brighter
+
+    return {
+      background: `rgba(76, 175, 80, ${intensity})`, // #4CAF50 with varying intensity
+      border: '#388E3C',
+      highlight: {
+        background: '#66BB6A',
+        border: '#2E7D32'
+      }
+    };
+  }
 }
 
 function truncate(text, maxLength) {

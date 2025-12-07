@@ -115,6 +115,46 @@ async function handleSendToLLM() {
           }
         }
 
+        // ==================== Card Architecture: Calculate Surprise & Confidence ====================
+        try {
+          // SurpriseDetector and ConfidenceCalculator are loaded globally via importScripts in background.js
+          // const SurpriseDetector = require('../../core/surprise-detector.js');
+          // const ConfidenceCalculator = require('../../core/confidence-calculator.js');
+
+          // Initialize database to get existing cards
+          await memoryDB.init();
+
+          // Get existing cards for surprise calculation
+          const existingCards = await memoryDB.getAllChunks();
+
+          const surpriseDetector = new SurpriseDetector();
+          const confidenceCalc = new ConfidenceCalculator();
+
+          console.log('[MemoryStorage] 🎯 Calculating surprise and confidence for new cards...');
+
+          for (const chunk of chunkSchemas) {
+            // Calculate surprise (how novel is this information?)
+            chunk.surprise = await surpriseDetector.calculateSurprise(chunk, existingCards);
+
+            // Calculate confidence (how reliable is this information?)
+            chunk.confidence = confidenceCalc.calculateConfidence(chunk, {
+              sourceReliability: 0.7,  // Default source reliability (can be adjusted)
+              existingCards: existingCards
+            });
+
+            console.log(
+              `[MemoryStorage] Card ${chunk.chunk_id}: ` +
+              `surprise=${chunk.surprise.toFixed(2)}, ` +
+              `confidence=${chunk.confidence.toFixed(2)}`
+            );
+          }
+
+          console.log('[MemoryStorage] ✅ Calculated surprise and confidence for all new cards');
+        } catch (cardError) {
+          console.warn('[MemoryStorage] Failed to calculate card metrics:', cardError);
+          // Continue with default values (already set in schema-builder)
+        }
+
         // Update savedContext with processed data
         await chrome.storage.local.set({
           savedContext: {

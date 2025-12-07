@@ -18,6 +18,13 @@ importScripts('/src/core/schema-builder.js');
 importScripts('/src/core/db.js');
 importScripts('/src/core/decision-agent.js');
 
+// ==================== Import Card Architecture Modules ====================
+importScripts('/src/core/surprise-detector.js');
+importScripts('/src/core/confidence-calculator.js');
+importScripts('/src/core/stability-manager.js');
+importScripts('/src/core/activation-tracker.js');
+importScripts('/src/core/forgetting-manager.js');
+
 // ==================== Import Shared Utilities ====================
 importScripts('/src/shared/notification-helper.js');
 
@@ -174,5 +181,84 @@ chrome.commands.onCommand.addListener(async (command) => {
   } else if (command === 'auto-fill-form') {
     // Form Filling: Alt+V
     await handleAutoFillForm();
+  }
+});
+
+// ==================== Card Architecture: Background Tasks ====================
+
+/**
+ * Set up periodic background tasks for card architecture
+ * - Stability evaluation: Every hour
+ * - Forgetting cycle: Every 7 days
+ */
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('[Background] 🔧 Setting up card architecture background tasks...');
+
+  // Stability evaluation: Every 1 hour
+  chrome.alarms.create('evaluateStability', {
+    delayInMinutes: 60,
+    periodInMinutes: 60
+  });
+
+  // Forgetting cycle: Every 7 days (10080 minutes)
+  chrome.alarms.create('performForgetting', {
+    delayInMinutes: 10080,
+    periodInMinutes: 10080
+  });
+
+  console.log('[Background] ✅ Background tasks scheduled:');
+  console.log('[Background]   - Stability evaluation: Every 1 hour');
+  console.log('[Background]   - Forgetting cycle: Every 7 days');
+});
+
+/**
+ * Handle alarm events for card architecture tasks
+ */
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  console.log(`[Background] ⏰ Alarm triggered: ${alarm.name}`);
+
+  try {
+    await memoryDB.init();
+
+    if (alarm.name === 'evaluateStability') {
+      // Evaluate temporary cards and migrate eligible ones to stable layer
+      const stabilityManager = new StabilityManager(memoryDB);
+      const result = await stabilityManager.evaluateTemporaryCards();
+
+      console.log(
+        `[Background] ✅ Stability evaluation complete: ` +
+        `${result.migrated}/${result.evaluated} cards migrated to stable layer`
+      );
+
+      // Get layer statistics
+      const stats = await stabilityManager.getLayerStats();
+      console.log(
+        `[Background] 📊 Layer distribution: ` +
+        `${stats.temporary} temporary, ${stats.stable} stable, ` +
+        `${stats.migrationReady} ready for migration`
+      );
+    } else if (alarm.name === 'performForgetting') {
+      // Perform forgetting cycle (decay and prune)
+      const forgettingManager = new ForgettingManager(memoryDB);
+      const result = await forgettingManager.performForgetting();
+
+      console.log(
+        `[Background] ✅ Forgetting cycle complete: ` +
+        `${result.pruned} cards marked obsolete, ` +
+        `${result.weakenedRelations} relations weakened`
+      );
+
+      // Get forgetting statistics
+      const stats = await forgettingManager.getForgettingStats();
+      console.log(
+        `[Background] 📊 Decay distribution: ` +
+        `${stats.highDecay} high (>0.7), ` +
+        `${stats.mediumDecay} medium (0.3-0.7), ` +
+        `${stats.lowDecay} low (<0.3), ` +
+        `${stats.obsolete} obsolete`
+      );
+    }
+  } catch (error) {
+    console.error(`[Background] ❌ Error in alarm ${alarm.name}:`, error);
   }
 });

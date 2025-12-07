@@ -59,6 +59,34 @@ function buildChunkSchemas(docId, chunks, rawContent, llmResult) {
       importance: chunk.metadata.importance,
       created_at: createdAt,
 
+      // ==================== Card Architecture (v2) ====================
+
+      // Layering system
+      layer: 'temporary',           // New chunks start in temporary layer
+
+      // Confidence & Surprise
+      confidence: 0.5,              // Initial medium confidence
+      surprise: 0.5,                // Will be calculated after creation
+
+      // Activation & Reinforcement
+      activation_count: 0,          // Number of times retrieved/used
+      activation_weight: 0,         // Activation strength (0-1)
+      last_activated: createdAt,    // Last activation timestamp
+
+      // Stability & Migration
+      stability_score: 0.3,         // Initial low stability (temporary layer)
+      migration_ready: false,       // Not ready to migrate yet
+
+      // Lifecycle & Evolution
+      version: 1,                   // Card version (for tracking changes)
+      parent_card_id: null,         // If split from another card
+      merged_from: [],              // If merged from multiple cards
+
+      // Forgetting & Pruning
+      decay_factor: 1.0,            // Full strength (no decay yet)
+      obsolete: false,              // Not obsolete
+      last_updated: createdAt,      // Last update timestamp
+
       // Knowledge graph: relationships to other chunks
       relationships: {
         related_chunks: [],        // IDs of semantically related chunks
