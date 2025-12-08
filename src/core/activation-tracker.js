@@ -280,7 +280,12 @@ class ActivationTracker {
   }
 }
 
-// Export for use in other modules
+// Ensure it's available globally in Service Worker context
+if (typeof self !== 'undefined') {
+  self.ActivationTracker = ActivationTracker;
+}
+
+// Export for use in other modules (for non-browser environments)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ActivationTracker;
 }

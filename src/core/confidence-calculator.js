@@ -220,7 +220,12 @@ class ConfidenceCalculator {
   }
 }
 
-// Export for use in other modules
+// Ensure it's available globally in Service Worker context
+if (typeof self !== 'undefined') {
+  self.ConfidenceCalculator = ConfidenceCalculator;
+}
+
+// Export for use in other modules (for non-browser environments)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ConfidenceCalculator;
 }

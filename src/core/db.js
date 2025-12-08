@@ -698,7 +698,12 @@ class MemoryDB {
 // Create singleton instance
 const memoryDB = new MemoryDB();
 
-// Export for use in other scripts
+// Ensure it's available globally in Service Worker context
+if (typeof self !== 'undefined') {
+  self.memoryDB = memoryDB;
+}
+
+// Export for use in other scripts (for non-browser environments)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = memoryDB;
 }

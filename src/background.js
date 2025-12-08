@@ -218,7 +218,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   console.log(`[Background] ⏰ Alarm triggered: ${alarm.name}`);
 
   try {
-    await memoryDB.init();
+    // Ensure memoryDB is initialized
+    // (Service worker may have been restarted)
+    if (!memoryDB || !memoryDB.db) {
+      await memoryDB.init();
+    }
 
     if (alarm.name === 'evaluateStability') {
       // Evaluate temporary cards and migrate eligible ones to stable layer
